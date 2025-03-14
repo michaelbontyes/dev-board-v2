@@ -1,0 +1,20 @@
+{
+  "name": "dev-board-v2",
+  "version": "1.0.0",
+  "description": "Jira API integration to fetch issues and sprints",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "dotenv": "^16.3.1",
+    "jira-client": "^8.2.2"
+  },
+  "devDependencies": {
+    "@types/jira-client": "^7.1.8",
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.3.2"
+  }
+}
