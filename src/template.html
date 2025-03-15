@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sprint Reports</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .filters {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        select, button {
+            padding: 8px 12px;
+            margin-right: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            background: white;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            font-size: 1.5em;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 5px;
+            border-bottom: 2px solid #eee;
+        }
+        .leaderboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .leaderboard-card {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .leaderboard-title {
+            font-size: 1.2em;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .completion-high { color: #28a745; }
+        .completion-medium { color: #ffc107; }
+        .completion-low { color: #dc3545; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sprint Reports</h1>
+        
+        <div class="filters">
+            <select id="sprintFilter">
+                <option value="all">All Sprints</option>
+                <!-- Sprint options will be populated dynamically -->
+            </select>
+            <select id="assigneeFilter">
+                <option value="all">All Assignees</option>
+                <!-- Assignee options will be populated dynamically -->
+            </select>
+            <button onclick="applyFilters()">Apply Filters</button>
+            <button onclick="resetFilters()">Reset</button>
+        </div>
+
+        <div id="summary" class="section">
+            <h2 class="section-title">Sprint Summary</h2>
+            <table id="summaryTable">
+                <!-- Summary table content will be populated dynamically -->
+            </table>
+        </div>
+
+        <div id="completion" class="section">
+            <h2 class="section-title">Issue Completion</h2>
+            <table id="completionTable">
+                <!-- Completion table content will be populated dynamically -->
+            </table>
+        </div>
+
+        <div id="reviewers" class="section">
+            <h2 class="section-title">Reviewers</h2>
+            <table id="reviewersTable">
+                <!-- Reviewers table content will be populated dynamically -->
+            </table>
+        </div>
+
+        <div id="shippers" class="section">
+            <h2 class="section-title">Shippers</h2>
+            <table id="shippersTable">
+                <!-- Shippers table content will be populated dynamically -->
+            </table>
+        </div>
+
+        <div id="leaderboard" class="section">
+            <h2 class="section-title">Leaderboard</h2>
+            <div class="leaderboard">
+                <!-- Leaderboard content will be populated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sprintData = SPRINT_DATA_PLACEHOLDER; // Will be replaced with actual data
+        let currentFilters = {
+            sprint: 'all',
+            assignee: 'all'
+        };
+
+        function initializeFilters() {
+            const sprintFilter = document.getElementById('sprintFilter');
+            const assigneeFilter = document.getElementById('assigneeFilter');
+            const uniqueAssignees = new Set();
+
+            // Add sprint options
+            sprintData.forEach(sprint => {
+                const option = document.createElement('option');
+                option.value = sprint.name;
+                option.textContent = sprint.name;
+                sprintFilter.appendChild(option);
+
+                // Collect unique assignees
+                Object.keys(sprint.timeLogged).forEach(assignee => uniqueAssignees.add(assignee));
+                Object.keys(sprint.completionStats).forEach(assignee => uniqueAssignees.add(assignee));
+                Object.keys(sprint.reviewerStats).forEach(assignee => uniqueAssignees.add(assignee));
+                Object.keys(sprint.shipperStats).forEach(assignee => uniqueAssignees.add(assignee));
+            });
+
+            // Add assignee options
+            Array.from(uniqueAssignees).sort().forEach(assignee => {
+                const option = document.createElement('option');
+                option.value = assignee;
+                option.textContent = assignee;
+                assigneeFilter.appendChild(option);
+            });
+        }
+
+        function getCompletionColor(completed, total) {
+            const percentage = (completed / total) * 100;
+            if (percentage >= 80) return 'completion-high';
+            if (percentage >= 50) return 'completion-medium';
+            return 'completion-low';
+        }
+
+        function formatDate(dateStr) {
+            return new Date(dateStr).toLocaleDateString('en-GB', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        }
+
+        function applyFilters() {
+            currentFilters.sprint = document.getElementById('sprintFilter').value;
+            currentFilters.assignee = document.getElementById('assigneeFilter').value;
+            updateTables();
+        }
+
+        function resetFilters() {
+            document.getElementById('sprintFilter').value = 'all';
+            document.getElementById('assigneeFilter').value = 'all';
+            currentFilters = { sprint: 'all', assignee: 'all' };
+            updateTables();
+        }
+
+        function filterData() {
+            let filteredData = [...sprintData];
+            
+            if (currentFilters.sprint !== 'all') {
+                filteredData = filteredData.filter(sprint => sprint.name === currentFilters.sprint);
+            }
+
+            if (currentFilters.assignee !== 'all') {
+                filteredData = filteredData.map(sprint => {
+                    const filtered = {...sprint};
+                    // Filter timeLogged
+                    filtered.timeLogged = Object.fromEntries(
+                        Object.entries(sprint.timeLogged)
+                            .filter(([assignee]) => assignee === currentFilters.assignee)
+                    );
+                    // Filter completionStats
+                    filtered.completionStats = Object.fromEntries(
+                        Object.entries(sprint.completionStats)
+                            .filter(([assignee]) => assignee === currentFilters.assignee)
+                    );
+                    // Filter reviewerStats
+                    filtered.reviewerStats = Object.fromEntries(
+                        Object.entries(sprint.reviewerStats)
+                            .filter(([assignee]) => assignee === currentFilters.assignee)
+                    );
+                    // Filter shipperStats
+                    filtered.shipperStats = Object.fromEntries(
+                        Object.entries(sprint.shipperStats)
+                            .filter(([assignee]) => assignee === currentFilters.assignee)
+                    );
+                    return filtered;
+                });
+            }
+
+            return filteredData;
+        }
+
+        function updateTables() {
+            const filteredData = filterData();
+            updateSummaryTable(filteredData);
+            updateCompletionTable(filteredData);
+            updateReviewersTable(filteredData);
+            updateShippersTable(filteredData);
+            updateLeaderboard(filteredData);
+        }
+
+        function updateSummaryTable(data) {
+            const table = document.getElementById('summaryTable');
+            let html = `
+                <tr>
+                    <th>Sprint</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Total</th>
+                    <th>UAT</th>
+                    <th>Done</th>
+                    <th>%</th>
+                    <th>Hours</th>
+                </tr>`;
+
+            data.forEach(sprint => {
+                const completionPercentage = (sprint.completedIssues / sprint.totalIssues) * 100;
+                const completionClass = getCompletionColor(sprint.completedIssues, sprint.totalIssues);
+                const totalHours = Object.values(sprint.timeLogged)
+                    .reduce((sum, seconds) => sum + seconds / 3600, 0);
+
+                html += `
+                    <tr>
+                        <td>${sprint.name}</td>
+                        <td>${formatDate(sprint.startDate)}</td>
+                        <td>${formatDate(sprint.endDate)}</td>
+                        <td>${sprint.totalIssues}</td>
+                        <td>${sprint.uatReadyIssues}</td>
+                        <td class="${completionClass}">${sprint.completedIssues}</td>
+                        <td class="${completionClass}">${Math.round(completionPercentage)}%</td>
+                        <td>${Math.round(totalHours)}h</td>
+                    </tr>`;
+            });
+
+            table.innerHTML = html;
+        }
+
+        function updateCompletionTable(data) {
+            const table = document.getElementById('completionTable');
+            let html = `
+                <tr>
+                    <th>Sprint</th>
+                    <th>Assignee</th>
+                    <th>Started</th>
+                    <th>Done</th>
+                    <th>Issues</th>
+                </tr>`;
+
+            data.forEach(sprint => {
+                Object.entries(sprint.completionStats).forEach(([assignee, stats]) => {
+                    const completionClass = getCompletionColor(stats.completed, stats.started);
+                    html += `
+                        <tr>
+                            <td>${sprint.name}</td>
+                            <td>${assignee}</td>
+                            <td>${stats.started}</td>
+                            <td class="${completionClass}">${stats.completed}</td>
+                            <td>${stats.completedIssues.join(', ')}</td>
+                        </tr>`;
+                });
+            });
+
+            table.innerHTML = html;
+        }
+
+        function updateReviewersTable(data) {
+            const table = document.getElementById('reviewersTable');
+            let html = `
+                <tr>
+                    <th>Sprint</th>
+                    <th>Reviewer</th>
+                    <th>Reviewed</th>
+                    <th>Issues</th>
+                </tr>`;
+
+            data.forEach(sprint => {
+                Object.entries(sprint.reviewerStats).forEach(([reviewer, stats]) => {
+                    html += `
+                        <tr>
+                            <td>${sprint.name}</td>
+                            <td>${reviewer}</td>
+                            <td>${stats.reviewed}</td>
+                            <td>${stats.reviewedIssues.join(', ')}</td>
+                        </tr>`;
+                });
+            });
+
+            table.innerHTML = html;
+        }
+
+        function updateShippersTable(data) {
+            const table = document.getElementById('shippersTable');
+            let html = `
+                <tr>
+                    <th>Sprint</th>
+                    <th>Shipper</th>
+                    <th>Shipped</th>
+                    <th>Issues</th>
+                </tr>`;
+
+            data.forEach(sprint => {
+                Object.entries(sprint.shipperStats).forEach(([shipper, stats]) => {
+                    html += `
+                        <tr>
+                            <td>${sprint.name}</td>
+                            <td>${shipper}</td>
+                            <td>${stats.shipped}</td>
+                            <td>${stats.shippedIssues.join(', ')}</td>
+                        </tr>`;
+                });
+            });
+
+            table.innerHTML = html;
+        }
+
+        function updateLeaderboard(data) {
+            const leaderboard = document.querySelector('.leaderboard');
+            const stats = calculateLeaderboardStats(data);
+            
+            leaderboard.innerHTML = `
+                <div class="leaderboard-card">
+                    <h3 class="leaderboard-title">⏱️ Most Hours Logged</h3>
+                    ${formatLeaderboardEntries(stats.hoursLogged, 'h')}
+                </div>
+                <div class="leaderboard-card">
+                    <h3 class="leaderboard-title">✅ Most Issues Completed</h3>
+                    ${formatLeaderboardEntries(stats.issuesCompleted, ' issues')}
+                </div>
+                <div class="leaderboard-card">
+                    <h3 class="leaderboard-title">👀 Top Reviewers</h3>
+                    ${formatLeaderboardEntries(stats.reviewed, ' reviews')}
+                </div>
+                <div class="leaderboard-card">
+                    <h3 class="leaderboard-title">🚢 Top Shippers</h3>
+                    ${formatLeaderboardEntries(stats.shipped, ' shipped')}
+                </div>`;
+        }
+
+        function calculateLeaderboardStats(data) {
+            const stats = {
+                hoursLogged: {},
+                issuesCompleted: {},
+                reviewed: {},
+                shipped: {}
+            };
+
+            data.forEach(sprint => {
+                // Hours logged
+                Object.entries(sprint.timeLogged).forEach(([person, seconds]) => {
+                    stats.hoursLogged[person] = (stats.hoursLogged[person] || 0) + seconds / 3600;
+                });
+
+                // Issues completed
+                Object.entries(sprint.completionStats).forEach(([person, personStats]) => {
+                    stats.issuesCompleted[person] = (stats.issuesCompleted[person] || 0) + personStats.completed;
+                });
+
+                // Reviews
+                Object.entries(sprint.reviewerStats).forEach(([person, personStats]) => {
+                    stats.reviewed[person] = (stats.reviewed[person] || 0) + personStats.reviewed;
+                });
+
+                // Shipped
+                Object.entries(sprint.shipperStats).forEach(([person, personStats]) => {
+                    stats.shipped[person] = (stats.shipped[person] || 0) + personStats.shipped;
+                });
+            });
+
+            return stats;
+        }
+
+        function formatLeaderboardEntries(data, suffix) {
+            return Object.entries(data)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map((entry, index) => `
+                    <div>
+                        ${index + 1}. ${entry[0]}: ${Math.round(entry[1])}${suffix}
+                    </div>`)
+                .join('');
+        }
+
+        // Initialize the page
+        initializeFilters();
+        updateTables();
+    </script>
+</body>
+</html> 

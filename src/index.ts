@@ -1,6 +1,8 @@
 import * as dotenv from 'dotenv';
 import JiraClient from 'jira-client';
 import chalk from 'chalk';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Load environment variables
 dotenv.config();
@@ -830,19 +832,47 @@ async function getAllProjectSprints(sprintNumber?: string) {
   }
 }
 
+async function generateHtmlReport(sprintSummaries: SprintSummary[]) {
+  try {
+    // Read the template file
+    const templatePath = path.join(__dirname, 'template.html');
+    let template = fs.readFileSync(templatePath, 'utf8');
+    
+    // Replace the placeholder with the actual data
+    template = template.replace(
+      'SPRINT_DATA_PLACEHOLDER',
+      JSON.stringify(sprintSummaries, null, 2)
+    );
+    
+    // Write the output file
+    const outputPath = path.join(__dirname, 'sprint-report.html');
+    fs.writeFileSync(outputPath, template);
+    
+    console.log(chalk.green(`\nHTML report generated: ${outputPath}`));
+    console.log(chalk.blue('Open this file in your browser to view the interactive report.'));
+  } catch (error) {
+    console.error(chalk.red('Error generating HTML report:', error));
+    throw error;
+  }
+}
+
 async function main() {
   try {
     const args = parseArgs();
+    let sprintSummaries;
     
     switch (args.report) {
       case 'sprints':
         console.log(chalk.blue(`\nFetching sprint data${args.sprintNumber ? ` for sprint ${args.sprintNumber}` : ''}...`));
-        await getAllProjectSprints(args.sprintNumber);
+        sprintSummaries = await getAllProjectSprints(args.sprintNumber);
         break;
       default:
         console.log(chalk.blue('\nFetching all project data...'));
-        await getAllProjectSprints();
+        sprintSummaries = await getAllProjectSprints();
     }
+
+    // Generate HTML report
+    await generateHtmlReport(sprintSummaries);
   } catch (error) {
     if (error instanceof Error) {
       console.error(chalk.red('Error in main execution:', error.message));
