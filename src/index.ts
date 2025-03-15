@@ -50,6 +50,22 @@ interface IssueCompletionStats {
   };
 }
 
+// Add new interface for reviewer stats
+interface ReviewerStats {
+  [reviewer: string]: {
+    reviewed: number;
+    reviewedIssues: string[];
+  };
+}
+
+// Add new interface for shipper stats
+interface ShipperStats {
+  [shipper: string]: {
+    shipped: number;
+    shippedIssues: string[];
+  };
+}
+
 interface SprintSummary {
   id: number;
   name: string;
@@ -62,6 +78,8 @@ interface SprintSummary {
     [assignee: string]: number;
   };
   completionStats: IssueCompletionStats;
+  reviewerStats: ReviewerStats;
+  shipperStats: ShipperStats; // Add new field
 }
 
 interface CommandArgs {
@@ -204,12 +222,122 @@ async function getAllProjectSprints(sprintNumber?: string) {
       const issues = await getSprintIssues(sprint.id);
       const timeLogged: { [key: string]: number } = {};
       const completionStats: IssueCompletionStats = {};
+      const reviewerStats: ReviewerStats = {};
+      const shipperStats: ShipperStats = {}; // Initialize shipper stats
       
       let completedIssues = 0;
       
       for (const issue of issues.issues) {
+        // Process changelog to find shippers for issues that reached UAT Ready
+        if (issue.changelog && issue.changelog.histories) {
+          // Sort changelog by date to process events in order
+          const sortedHistory = issue.changelog.histories.sort(
+            (a: JiraChangelog, b: JiraChangelog) => new Date(a.created).getTime() - new Date(b.created).getTime()
+          );
+
+          let shipper = '';
+          let movedDirectlyToUATReady = false;
+          let firstMoverFromTesting = '';
+          let firstMoveToOtherStatus = '';
+
+          // Look for Testing to UAT Ready transitions
+          for (const history of sortedHistory) {
+            for (const item of history.items) {
+              if (item.field === 'status') {
+                // Track first person who moved from Testing to any status
+                if (item.fromString === 'Testing' && !firstMoverFromTesting) {
+                  firstMoverFromTesting = history.author.displayName;
+                  firstMoveToOtherStatus = item.toString;
+                }
+                // Track direct move to UAT Ready
+                if (item.fromString === 'Testing' && item.toString === 'UAT Ready' && !shipper) {
+                  shipper = history.author.displayName;
+                  movedDirectlyToUATReady = true;
+                  break;
+                }
+              }
+            }
+            if (shipper) break;
+          }
+
+          // If no direct Testing to UAT Ready transition found, use first person who moved from Testing
+          if (!shipper && firstMoverFromTesting) {
+            shipper = firstMoverFromTesting;
+            movedDirectlyToUATReady = false;
+          }
+
+          // Record the statistics for whoever we found
+          if (shipper) {
+            shipperStats[shipper] = shipperStats[shipper] || { shipped: 0, shippedIssues: [] };
+            shipperStats[shipper].shipped++;
+            // Add asterisk if not moved directly to UAT Ready
+            const issueKey = movedDirectlyToUATReady ? issue.key : `${issue.key}*`;
+            shipperStats[shipper].shippedIssues.push(issueKey);
+          } else if (issue.fields.status.name === 'UAT Ready' || issue.fields.status.name === 'Done') {
+            // If we still found no one but the issue is in UAT Ready or Done, mark as Unknown
+            const unknownShipper = "Unknown";
+            shipperStats[unknownShipper] = shipperStats[unknownShipper] || { shipped: 0, shippedIssues: [] };
+            shipperStats[unknownShipper].shipped++;
+            shipperStats[unknownShipper].shippedIssues.push(`${issue.key}*`); // Always add asterisk for unknown
+          }
+        }
+
         if (issue.fields.status.name === 'Done') {
           completedIssues++;
+          
+          // Process changelog to find reviewers
+          if (issue.changelog && issue.changelog.histories) {
+            // Sort changelog by date to process events in order
+            const sortedHistory = issue.changelog.histories.sort(
+              (a: JiraChangelog, b: JiraChangelog) => new Date(a.created).getTime() - new Date(b.created).getTime()
+            );
+
+            let reviewer = '';
+            let movedDirectlyToTesting = false;
+            let firstMoverFromPRReady = '';
+            let firstMoveToOtherStatus = '';
+
+            // Look for PR Ready to Testing transitions
+            for (const history of sortedHistory) {
+              for (const item of history.items) {
+                if (item.field === 'status') {
+                  // Track first person who moved from PR Ready to any status
+                  if (item.fromString === 'PR Ready' && !firstMoverFromPRReady) {
+                    firstMoverFromPRReady = history.author.displayName;
+                    firstMoveToOtherStatus = item.toString;
+                  }
+                  // Track direct move to Testing
+                  if (item.fromString === 'PR Ready' && item.toString === 'Testing' && !reviewer) {
+                    reviewer = history.author.displayName;
+                    movedDirectlyToTesting = true;
+                    break;
+                  }
+                }
+              }
+              if (reviewer) break;
+            }
+
+            // If no direct PR Ready to Testing transition found, use first person who moved from PR Ready
+            if (!reviewer && firstMoverFromPRReady) {
+              reviewer = firstMoverFromPRReady;
+              movedDirectlyToTesting = false;
+            }
+
+            // Record the statistics for whoever we found
+            if (reviewer) {
+              reviewerStats[reviewer] = reviewerStats[reviewer] || { reviewed: 0, reviewedIssues: [] };
+              reviewerStats[reviewer].reviewed++;
+              // Add asterisk if not moved directly to Testing
+              const issueKey = movedDirectlyToTesting ? issue.key : `${issue.key}*`;
+              reviewerStats[reviewer].reviewedIssues.push(issueKey);
+            } else {
+              // If we still found no one, mark as Unknown
+              const unknownReviewer = "Unknown";
+              reviewerStats[unknownReviewer] = reviewerStats[unknownReviewer] || { reviewed: 0, reviewedIssues: [] };
+              reviewerStats[unknownReviewer].reviewed++;
+              reviewerStats[unknownReviewer].reviewedIssues.push(`${issue.key}*`); // Always add asterisk for unknown
+            }
+          }
           
           // Process changelog to find who first moved to In Progress
           if (issue.changelog && issue.changelog.histories) {
@@ -292,7 +420,9 @@ async function getAllProjectSprints(sprintNumber?: string) {
         completedIssues,
         uatReadyIssues: issues.uatTotal,
         timeLogged,
-        completionStats
+        completionStats,
+        reviewerStats,
+        shipperStats // Add shipper stats
       });
     }
 
@@ -452,6 +582,126 @@ async function getAllProjectSprints(sprintNumber?: string) {
       console.log(row);
     }
     console.log(chalk.gray(completionHeaderLine));
+
+    // After printing the Issue Completion table, add the Reviewers table
+    console.log('\n' + chalk.bold.blue('Reviewers Table:'));
+
+    // Calculate total width for the reviewers table
+    const reviewersHeaderLine = '─'.repeat(maxNameLength + 40);
+    console.log(chalk.gray(reviewersHeaderLine));
+
+    // Print reviewers table headers
+    const reviewersHeader = 
+      chalk.bold.white('Sprint'.padEnd(maxNameLength + 2)) +
+      chalk.bold.white('Reviewer'.padEnd(20)) +
+      chalk.bold.white('Reviewed'.padEnd(10)) +
+      chalk.bold.white('Issues');
+
+    console.log(reviewersHeader);
+    console.log(chalk.gray(reviewersHeaderLine));
+
+    // Print reviewer stats for each sprint
+    for (const sprint of sprintSummaries) {
+      const reviewers = Object.keys(sprint.reviewerStats).sort();
+      
+      for (const reviewer of reviewers) {
+        const stats = sprint.reviewerStats[reviewer];
+        const row = 
+          chalk.white(sprint.name.padEnd(maxNameLength + 2)) +
+          chalk.cyan(reviewer.padEnd(20)) +
+          chalk.yellow(String(stats.reviewed).padEnd(10)) +
+          chalk.gray(stats.reviewedIssues.join(', '));
+        
+        console.log(row);
+      }
+      
+      // Add a separator line between sprints
+      console.log(chalk.gray(reviewersHeaderLine));
+    }
+
+    // Add total row for reviewer stats
+    const totalReviewerStats: ReviewerStats = {};
+    for (const sprint of sprintSummaries) {
+      for (const [reviewer, stats] of Object.entries(sprint.reviewerStats)) {
+        totalReviewerStats[reviewer] = totalReviewerStats[reviewer] || { reviewed: 0, reviewedIssues: [] };
+        totalReviewerStats[reviewer].reviewed += stats.reviewed;
+        totalReviewerStats[reviewer].reviewedIssues = totalReviewerStats[reviewer].reviewedIssues.concat(stats.reviewedIssues);
+      }
+    }
+
+    // Print total reviewer stats
+    const sortedTotalReviewers = Object.keys(totalReviewerStats).sort();
+    for (const reviewer of sortedTotalReviewers) {
+      const stats = totalReviewerStats[reviewer];
+      const row = 
+        chalk.bold.white('TOTAL'.padEnd(maxNameLength + 2)) +
+        chalk.cyan(reviewer.padEnd(20)) +
+        chalk.yellow(String(stats.reviewed).padEnd(10)) +
+        chalk.gray(stats.reviewedIssues.join(', '));
+      
+      console.log(row);
+    }
+    console.log(chalk.gray(reviewersHeaderLine));
+
+    // After printing the Reviewers table, add the Shippers table
+    console.log('\n' + chalk.bold.blue('Shippers Table:'));
+
+    // Calculate total width for the shippers table
+    const shippersHeaderLine = '─'.repeat(maxNameLength + 40);
+    console.log(chalk.gray(shippersHeaderLine));
+
+    // Print shippers table headers
+    const shippersHeader = 
+      chalk.bold.white('Sprint'.padEnd(maxNameLength + 2)) +
+      chalk.bold.white('Shipper'.padEnd(20)) +
+      chalk.bold.white('Shipped'.padEnd(10)) +
+      chalk.bold.white('Issues');
+
+    console.log(shippersHeader);
+    console.log(chalk.gray(shippersHeaderLine));
+
+    // Print shipper stats for each sprint
+    for (const sprint of sprintSummaries) {
+      const shippers = Object.keys(sprint.shipperStats).sort();
+      
+      for (const shipper of shippers) {
+        const stats = sprint.shipperStats[shipper];
+        const row = 
+          chalk.white(sprint.name.padEnd(maxNameLength + 2)) +
+          chalk.cyan(shipper.padEnd(20)) +
+          chalk.yellow(String(stats.shipped).padEnd(10)) +
+          chalk.gray(stats.shippedIssues.join(', '));
+        
+        console.log(row);
+      }
+      
+      // Add a separator line between sprints
+      console.log(chalk.gray(shippersHeaderLine));
+    }
+
+    // Add total row for shipper stats
+    const totalShipperStats: ShipperStats = {};
+    for (const sprint of sprintSummaries) {
+      for (const [shipper, stats] of Object.entries(sprint.shipperStats)) {
+        totalShipperStats[shipper] = totalShipperStats[shipper] || { shipped: 0, shippedIssues: [] };
+        totalShipperStats[shipper].shipped += stats.shipped;
+        totalShipperStats[shipper].shippedIssues = totalShipperStats[shipper].shippedIssues.concat(stats.shippedIssues);
+      }
+    }
+
+    // Print total shipper stats
+    const sortedTotalShippers = Object.keys(totalShipperStats).sort();
+    for (const shipper of sortedTotalShippers) {
+      const stats = totalShipperStats[shipper];
+      const row = 
+        chalk.bold.white('TOTAL'.padEnd(maxNameLength + 2)) +
+        chalk.cyan(shipper.padEnd(20)) +
+        chalk.yellow(String(stats.shipped).padEnd(10)) +
+        chalk.gray(stats.shippedIssues.join(', '));
+      
+      console.log(row);
+    }
+    console.log(chalk.gray(shippersHeaderLine));
 
     return sprintSummaries;
   } catch (error) {
