@@ -31,13 +31,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Sprint Report
+        run: npm start sprints
+        env:
+          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+          JIRA_USER: ${{ secrets.JIRA_USER }}
+          JIRA_HOST: ${{ secrets.JIRA_HOST }}
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Prepare HTML file
         run: |
           mkdir -p _site
-          cp src/template.html _site/index.html
+          cp src/sprint-report.html _site/index.html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
