@@ -76,11 +76,25 @@ const jira = new JiraClient({
 });
 
 async function getSprintIssues(sprintId: number) {
+  // Get all issues in the sprint
   const jql = `sprint = ${sprintId}`;
-  return await jira.searchJira(jql, {
+  const allIssues = await jira.searchJira(jql, {
     maxResults: 1000,
     fields: ['summary', 'status', 'assignee', 'timetracking', 'worklog']
   });
+
+  // Get issues that were in UAT Ready during the sprint
+  const uatJql = `sprint = ${sprintId} AND status was "UAT Ready"`;
+  const uatIssues = await jira.searchJira(uatJql, {
+    maxResults: 1000,
+    fields: ['key']
+  });
+
+  return {
+    issues: allIssues.issues,
+    total: allIssues.total,
+    uatTotal: uatIssues.total
+  };
 }
 
 async function getAllProjectIssues() {
@@ -167,13 +181,10 @@ async function getAllProjectSprints(sprintNumber?: string) {
       const timeLogged: { [key: string]: number } = {};
       
       let completedIssues = 0;
-      let uatReadyIssues = 0;
       
       for (const issue of issues.issues) {
         if (issue.fields.status.name === 'Done') {
           completedIssues++;
-        } else if (issue.fields.status.name === 'UAT Ready') {
-          uatReadyIssues++;
         }
         
         // Reset time logged for this sprint
@@ -203,7 +214,7 @@ async function getAllProjectSprints(sprintNumber?: string) {
         endDate: sprint.endDate,
         totalIssues: issues.total,
         completedIssues,
-        uatReadyIssues,
+        uatReadyIssues: issues.uatTotal,
         timeLogged
       });
     }
@@ -237,8 +248,8 @@ async function getAllProjectSprints(sprintNumber?: string) {
       chalk.bold.white('Start'.padEnd(maxDateLength + 2)) +
       chalk.bold.white('End'.padEnd(maxDateLength + 2)) +
       chalk.bold.white('Total'.padEnd(maxIssuesLength + 2)) +
-      chalk.bold.white('Done'.padEnd(maxIssuesLength + 2)) +
       chalk.bold.magenta('UAT'.padEnd(maxIssuesLength + 2)) +
+      chalk.bold.white('Done'.padEnd(maxIssuesLength + 2)) +
       chalk.bold.white('%'.padEnd(5));
     
     // Add assignee columns
@@ -258,8 +269,8 @@ async function getAllProjectSprints(sprintNumber?: string) {
         chalk.yellow(formatDate(sprint.startDate).padEnd(maxDateLength + 2)) +
         chalk.yellow(formatDate(sprint.endDate).padEnd(maxDateLength + 2)) +
         chalk.blue(String(sprint.totalIssues).padEnd(maxIssuesLength + 2)) +
-        completionColor(String(sprint.completedIssues).padEnd(maxIssuesLength + 2)) +
         chalk.magenta(String(sprint.uatReadyIssues).padEnd(maxIssuesLength + 2)) +
+        completionColor(String(sprint.completedIssues).padEnd(maxIssuesLength + 2)) +
         completionColor(Math.round(completionPercentage) + '%'.padEnd(2));
       
       // Add time logged for each assignee
@@ -267,7 +278,7 @@ async function getAllProjectSprints(sprintNumber?: string) {
         const hours = sprint.timeLogged[assignee] 
           ? convertJiraTimeToHours(sprint.timeLogged[assignee])
           : 0;
-        const hoursStr = Math.round(hours).toString();
+        const hoursStr = Math.round(hours).toString() + 'h';
         const timeColor = getTimeLogColor(hours);
         row += timeColor(hoursStr.padEnd(assigneeColumnWidth + 2));
       }
@@ -288,15 +299,15 @@ async function getAllProjectSprints(sprintNumber?: string) {
       ''.padEnd(maxDateLength + 2) +
       ''.padEnd(maxDateLength + 2) +
       chalk.bold.blue(String(totalIssues).padEnd(maxIssuesLength + 2)) +
-      totalCompletionColor(String(totalCompleted).padEnd(maxIssuesLength + 2)) +
       chalk.bold.magenta(String(totalUatReady).padEnd(maxIssuesLength + 2)) +
+      totalCompletionColor(String(totalCompleted).padEnd(maxIssuesLength + 2)) +
       totalCompletionColor(Math.round(totalCompletionPercentage) + '%'.padEnd(2));
 
     // Add total hours per assignee
     for (const assignee of sortedAssignees) {
       const totalHours = convertJiraTimeToHours(sprintSummaries.reduce((sum, sprint) => 
         sum + (sprint.timeLogged[assignee] || 0), 0));
-      const hoursStr = Math.round(totalHours).toString();
+      const hoursStr = Math.round(totalHours).toString() + 'h';
       const timeColor = getTimeLogColor(totalHours);
       totalRow += timeColor(hoursStr.padEnd(assigneeColumnWidth + 2));
     }
