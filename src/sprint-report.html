@@ -21,7 +21,7 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .filters {
-            margin-bottom: 20px;
+            margin: 20px 0;
             padding: 15px;
             background: #f8f9fa;
             border-radius: 6px;
@@ -63,26 +63,110 @@
         .section-title {
             font-size: 1.5em;
             color: #2c3e50;
-            margin-bottom: 15px;
+            margin-bottom: 8px;
             padding-bottom: 5px;
             border-bottom: 2px solid #eee;
+        }
+        .section-description {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+            display: none;
+        }
+        .section-description.visible {
+            display: block;
+        }
+        .toggle-button {
+            background: none;
+            border: none;
+            color: #007bff;
+            cursor: pointer;
+            font-size: 0.9em;
+            padding: 4px 8px;
+            margin: 0 0 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .toggle-button:hover {
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .toggle-icon {
+            transition: transform 0.2s;
+        }
+        .toggle-icon.rotated {
+            transform: rotate(90deg);
+        }
+        .issues-column {
+            display: none;
+        }
+        .issues-column.visible {
+            display: table-cell;
+        }
+        .metric-explanation {
+            margin-left: 20px;
+            color: #666;
+            font-style: italic;
+        }
+        .leaderboard-section {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: white;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .leaderboard-title {
+            text-align: center;
+            font-size: 2em;
+            margin-bottom: 20px;
+            color: #fff;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
         .leaderboard {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 20px;
-            margin-bottom: 30px;
         }
         .leaderboard-card {
-            background: white;
-            padding: 15px;
-            border-radius: 6px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
         }
-        .leaderboard-title {
+        .leaderboard-card:hover {
+            transform: translateY(-5px);
+        }
+        .leaderboard-card-title {
+            font-size: 1.3em;
+            color: #fff;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .leaderboard-card-description {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.85em;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .leaderboard-entry {
+            padding: 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .leaderboard-medal {
             font-size: 1.2em;
-            color: #2c3e50;
-            margin-bottom: 10px;
+            min-width: 24px;
         }
         .completion-high { color: #28a745; }
         .completion-medium { color: #ffc107; }
@@ -93,6 +177,13 @@
 <body>
     <div class="container">
         <h1>Sprint Reports</h1>
+
+        <div class="leaderboard-section">
+            <h2 class="leaderboard-title">🏆 Sprint Champions</h2>
+            <div class="leaderboard">
+                <!-- Leaderboard content will be populated dynamically -->
+            </div>
+        </div>
         
         <div class="filters">
             <select id="sprintFilter">
@@ -109,6 +200,14 @@
 
         <div id="summary" class="section">
             <h2 class="section-title">Sprint Summary</h2>
+            <div class="section-description">
+                <div>A high-level overview of sprint metrics:</div>
+                <div class="metric-explanation">• Total: All issues in the sprint</div>
+                <div class="metric-explanation">• UAT: Issues that reached "UAT Ready" status</div>
+                <div class="metric-explanation">• Done: Issues completed in the sprint</div>
+                <div class="metric-explanation">• %: Completion rate (Done/Total × 100)</div>
+                <div class="metric-explanation">• Hours: Time logged per person during sprint dates</div>
+            </div>
             <table id="summaryTable">
                 <!-- Summary table content will be populated dynamically -->
             </table>
@@ -116,6 +215,21 @@
 
         <div id="completion" class="section">
             <h2 class="section-title">Issue Completion</h2>
+            <button class="toggle-button" onclick="toggleExplanation('completion')">
+                <span class="toggle-icon">▶</span> Show calculation details
+            </button>
+            <div class="section-description" id="completion-explanation">
+                <div>Tracks who started and completed issues:</div>
+                <div class="metric-explanation">• Started: Issues moved from "To Do" by this person</div>
+                <div class="metric-explanation">• Done: Issues that reached "Done" status</div>
+                <div class="metric-explanation">• Issues: List of completed issues (with * for indirect transitions)</div>
+                <div class="metric-explanation">• Color coding: ≥80% green, ≥50% yellow, <50% red</div>
+            </div>
+            <div style="text-align: right; margin-bottom: 10px;">
+                <button class="toggle-button" onclick="toggleIssuesColumn('completion')">
+                    <span class="toggle-icon">▶</span> Show issue details
+                </button>
+            </div>
             <table id="completionTable">
                 <!-- Completion table content will be populated dynamically -->
             </table>
@@ -123,6 +237,21 @@
 
         <div id="reviewers" class="section">
             <h2 class="section-title">Reviewers</h2>
+            <button class="toggle-button" onclick="toggleExplanation('reviewers')">
+                <span class="toggle-icon">▶</span> Show calculation details
+            </button>
+            <div class="section-description" id="reviewers-explanation">
+                <div>Shows code review activity:</div>
+                <div class="metric-explanation">• Reviewer: Person who reviewed the code</div>
+                <div class="metric-explanation">• Reviewed: Count of issues reviewed</div>
+                <div class="metric-explanation">• Issues: List of reviewed issues</div>
+                <div class="metric-explanation">• *: Indicates indirect transition (not directly from "PR Ready" to "Testing")</div>
+            </div>
+            <div style="text-align: right; margin-bottom: 10px;">
+                <button class="toggle-button" onclick="toggleIssuesColumn('reviewers')">
+                    <span class="toggle-icon">▶</span> Show issue details
+                </button>
+            </div>
             <table id="reviewersTable">
                 <!-- Reviewers table content will be populated dynamically -->
             </table>
@@ -130,16 +259,24 @@
 
         <div id="shippers" class="section">
             <h2 class="section-title">Shippers</h2>
+            <button class="toggle-button" onclick="toggleExplanation('shippers')">
+                <span class="toggle-icon">▶</span> Show calculation details
+            </button>
+            <div class="section-description" id="shippers-explanation">
+                <div>Tracks deployment activity:</div>
+                <div class="metric-explanation">• Shipper: Person who deployed the code</div>
+                <div class="metric-explanation">• Shipped: Count of issues deployed</div>
+                <div class="metric-explanation">• Issues: List of shipped issues</div>
+                <div class="metric-explanation">• *: Indicates indirect transition (not directly from "Testing" to "UAT Ready")</div>
+            </div>
+            <div style="text-align: right; margin-bottom: 10px;">
+                <button class="toggle-button" onclick="toggleIssuesColumn('shippers')">
+                    <span class="toggle-icon">▶</span> Show issue details
+                </button>
+            </div>
             <table id="shippersTable">
                 <!-- Shippers table content will be populated dynamically -->
             </table>
-        </div>
-
-        <div id="leaderboard" class="section">
-            <h2 class="section-title">Leaderboard</h2>
-            <div class="leaderboard">
-                <!-- Leaderboard content will be populated dynamically -->
-            </div>
         </div>
     </div>
 
@@ -3367,7 +3504,7 @@
     "name": "LIME Sprint 21",
     "startDate": "2025-03-10T08:00:11.227Z",
     "endDate": "2025-03-21T16:00:00.000Z",
-    "totalIssues": 71,
+    "totalIssues": 72,
     "completedIssues": 15,
     "uatReadyIssues": 25,
     "timeLogged": {
@@ -3487,6 +3624,13 @@
             assignee: 'all'
         };
 
+        function getLatestSprint(data) {
+            return data.reduce((latest, current) => {
+                if (!latest) return current;
+                return new Date(current.endDate) > new Date(latest.endDate) ? current : latest;
+            }, null)?.name || 'all';
+        }
+
         function initializeFilters() {
             const sprintFilter = document.getElementById('sprintFilter');
             const assigneeFilter = document.getElementById('assigneeFilter');
@@ -3513,6 +3657,11 @@
                 option.textContent = assignee;
                 assigneeFilter.appendChild(option);
             });
+
+            // Set default to latest sprint
+            const latestSprint = getLatestSprint(sprintData);
+            sprintFilter.value = latestSprint;
+            currentFilters.sprint = latestSprint;
         }
 
         function getCompletionColor(completed, total) {
@@ -3633,7 +3782,7 @@
                     <th>Assignee</th>
                     <th>Started</th>
                     <th>Done</th>
-                    <th>Issues</th>
+                    <th class="issues-column">Issues</th>
                 </tr>`;
 
             data.forEach(sprint => {
@@ -3645,7 +3794,7 @@
                             <td>${assignee}</td>
                             <td>${stats.started}</td>
                             <td class="${completionClass}">${stats.completed}</td>
-                            <td>${stats.completedIssues.join(', ')}</td>
+                            <td class="issues-column">${stats.completedIssues.join(', ')}</td>
                         </tr>`;
                 });
             });
@@ -3660,7 +3809,7 @@
                     <th>Sprint</th>
                     <th>Reviewer</th>
                     <th>Reviewed</th>
-                    <th>Issues</th>
+                    <th class="issues-column">Issues</th>
                 </tr>`;
 
             data.forEach(sprint => {
@@ -3670,7 +3819,7 @@
                             <td>${sprint.name}</td>
                             <td>${reviewer}</td>
                             <td>${stats.reviewed}</td>
-                            <td>${stats.reviewedIssues.join(', ')}</td>
+                            <td class="issues-column">${stats.reviewedIssues.join(', ')}</td>
                         </tr>`;
                 });
             });
@@ -3685,7 +3834,7 @@
                     <th>Sprint</th>
                     <th>Shipper</th>
                     <th>Shipped</th>
-                    <th>Issues</th>
+                    <th class="issues-column">Issues</th>
                 </tr>`;
 
             data.forEach(sprint => {
@@ -3695,7 +3844,7 @@
                             <td>${sprint.name}</td>
                             <td>${shipper}</td>
                             <td>${stats.shipped}</td>
-                            <td>${stats.shippedIssues.join(', ')}</td>
+                            <td class="issues-column">${stats.shippedIssues.join(', ')}</td>
                         </tr>`;
                 });
             });
@@ -3709,19 +3858,31 @@
             
             leaderboard.innerHTML = `
                 <div class="leaderboard-card">
-                    <h3 class="leaderboard-title">⏱️ Most Hours Logged</h3>
+                    <h3 class="leaderboard-card-title">⏱️ Most Hours Logged</h3>
+                    <div class="leaderboard-card-description">
+                        Total hours logged in Jira worklogs during sprint periods
+                    </div>
                     ${formatLeaderboardEntries(stats.hoursLogged, 'h')}
                 </div>
                 <div class="leaderboard-card">
-                    <h3 class="leaderboard-title">✅ Most Issues Completed</h3>
+                    <h3 class="leaderboard-card-title">✅ Most Issues Completed</h3>
+                    <div class="leaderboard-card-description">
+                        Number of issues moved to "Done" after being started by the assignee
+                    </div>
                     ${formatLeaderboardEntries(stats.issuesCompleted, ' issues')}
                 </div>
                 <div class="leaderboard-card">
-                    <h3 class="leaderboard-title">👀 Top Reviewers</h3>
+                    <h3 class="leaderboard-card-title">👀 Top Reviewers</h3>
+                    <div class="leaderboard-card-description">
+                        Issues moved from "PR Ready" to "Testing" (* indicates indirect transitions)
+                    </div>
                     ${formatLeaderboardEntries(stats.reviewed, ' reviews')}
                 </div>
                 <div class="leaderboard-card">
-                    <h3 class="leaderboard-title">🚢 Top Shippers</h3>
+                    <h3 class="leaderboard-card-title">🚢 Top Shippers</h3>
+                    <div class="leaderboard-card-description">
+                        Issues moved from "Testing" to "UAT Ready" (* indicates indirect transitions)
+                    </div>
                     ${formatLeaderboardEntries(stats.shipped, ' shipped')}
                 </div>`;
         }
@@ -3760,14 +3921,37 @@
         }
 
         function formatLeaderboardEntries(data, suffix) {
+            const medals = ['🥇', '🥈', '🥉'];
             return Object.entries(data)
                 .sort((a, b) => b[1] - a[1])
                 .slice(0, 3)
                 .map((entry, index) => `
-                    <div>
-                        ${index + 1}. ${entry[0]}: ${Math.round(entry[1])}${suffix}
+                    <div class="leaderboard-entry">
+                        <span class="leaderboard-medal">${medals[index]}</span>
+                        <span>${entry[0]}: ${Math.round(entry[1])}${suffix}</span>
                     </div>`)
                 .join('');
+        }
+
+        function toggleExplanation(section) {
+            const explanation = document.getElementById(`${section}-explanation`);
+            const button = explanation.previousElementSibling;
+            const icon = button.querySelector('.toggle-icon');
+            
+            explanation.classList.toggle('visible');
+            icon.classList.toggle('rotated');
+            button.innerHTML = `<span class="toggle-icon ${explanation.classList.contains('visible') ? 'rotated' : ''}">▶</span> ${explanation.classList.contains('visible') ? 'Hide' : 'Show'} calculation details`;
+        }
+
+        function toggleIssuesColumn(section) {
+            const table = document.getElementById(`${section}Table`);
+            const button = table.previousElementSibling.querySelector('.toggle-button');
+            const icon = button.querySelector('.toggle-icon');
+            const cells = table.getElementsByClassName('issues-column');
+            
+            Array.from(cells).forEach(cell => cell.classList.toggle('visible'));
+            icon.classList.toggle('rotated');
+            button.innerHTML = `<span class="toggle-icon ${cells[0].classList.contains('visible') ? 'rotated' : ''}">▶</span> ${cells[0].classList.contains('visible') ? 'Hide' : 'Show'} issue details`;
         }
 
         // Initialize the page
