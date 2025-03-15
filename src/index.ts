@@ -28,6 +28,28 @@ interface JiraWorklog {
   timeSpentSeconds: number;
 }
 
+interface JiraChangelogItem {
+  field: string;
+  fromString: string;
+  toString: string;
+  author: {
+    displayName: string;
+  };
+}
+
+interface JiraChangelog {
+  created: string;
+  items: JiraChangelogItem[];
+}
+
+interface IssueCompletionStats {
+  [assignee: string]: {
+    started: number;
+    completed: number;
+    completedIssues: string[]; // Array to store completed issue keys
+  };
+}
+
 interface SprintSummary {
   id: number;
   name: string;
@@ -39,6 +61,7 @@ interface SprintSummary {
   timeLogged: {
     [assignee: string]: number;
   };
+  completionStats: IssueCompletionStats;
 }
 
 interface CommandArgs {
@@ -80,7 +103,8 @@ async function getSprintIssues(sprintId: number) {
   const jql = `sprint = ${sprintId}`;
   const allIssues = await jira.searchJira(jql, {
     maxResults: 1000,
-    fields: ['summary', 'status', 'assignee', 'timetracking', 'worklog']
+    fields: ['summary', 'status', 'assignee', 'timetracking', 'worklog'],
+    expand: ['changelog']
   });
 
   // Get issues that were in UAT Ready during the sprint
@@ -179,12 +203,64 @@ async function getAllProjectSprints(sprintNumber?: string) {
       console.log(chalk.yellow(`Fetching data for sprint: ${sprint.name}...`));
       const issues = await getSprintIssues(sprint.id);
       const timeLogged: { [key: string]: number } = {};
+      const completionStats: IssueCompletionStats = {};
       
       let completedIssues = 0;
       
       for (const issue of issues.issues) {
         if (issue.fields.status.name === 'Done') {
           completedIssues++;
+          
+          // Process changelog to find who first moved to In Progress
+          if (issue.changelog && issue.changelog.histories) {
+            let starter = '';
+            let firstMoverFromToDo = ''; // Track first person who moved from To Do
+            let movedDirectlyToInProgress = false; // Track if moved directly to In Progress
+            
+            // Sort changelog by date to process events in order
+            const sortedHistory = issue.changelog.histories.sort(
+              (a: JiraChangelog, b: JiraChangelog) => new Date(a.created).getTime() - new Date(b.created).getTime()
+            );
+
+            // First pass: look for direct move to In Progress
+            for (const history of sortedHistory) {
+              for (const item of history.items) {
+                if (item.field === 'status' && item.toString === 'In Progress' && !starter) {
+                  starter = history.author.displayName;
+                  movedDirectlyToInProgress = item.fromString === 'To Do';
+                  break;
+                }
+                // Track first move from To Do as backup
+                if (item.field === 'status' && item.fromString === 'To Do' && !firstMoverFromToDo) {
+                  firstMoverFromToDo = history.author.displayName;
+                }
+              }
+              if (starter) break;
+            }
+            
+            // If no one moved it to In Progress, use the first person who moved it from To Do
+            if (!starter && firstMoverFromToDo) {
+              starter = firstMoverFromToDo;
+              movedDirectlyToInProgress = false;
+            }
+            
+            // Record the statistics for whoever we found
+            if (starter) {
+              completionStats[starter] = completionStats[starter] || { started: 0, completed: 0, completedIssues: [] };
+              completionStats[starter].started++;
+              completionStats[starter].completed++;
+              // Add asterisk if not moved directly to In Progress
+              const issueKey = movedDirectlyToInProgress ? issue.key : `${issue.key}*`;
+              completionStats[starter].completedIssues.push(issueKey);
+            } else {
+              // If we still found no one, mark as Unknown
+              const unknownStarter = "Unknown";
+              completionStats[unknownStarter] = completionStats[unknownStarter] || { started: 0, completed: 0, completedIssues: [] };
+              completionStats[unknownStarter].started++;
+              completionStats[unknownStarter].completed++;
+              completionStats[unknownStarter].completedIssues.push(`${issue.key}*`); // Always add asterisk for unknown
+            }
+          }
         }
         
         // Reset time logged for this sprint
@@ -215,7 +291,8 @@ async function getAllProjectSprints(sprintNumber?: string) {
         totalIssues: issues.total,
         completedIssues,
         uatReadyIssues: issues.uatTotal,
-        timeLogged
+        timeLogged,
+        completionStats
       });
     }
 
@@ -252,13 +329,11 @@ async function getAllProjectSprints(sprintNumber?: string) {
       chalk.bold.white('Done'.padEnd(maxIssuesLength + 2)) +
       chalk.bold.white('%'.padEnd(5));
     
-    // Add assignee columns
+    // Add assignee columns for time logged
     for (const assignee of sortedAssignees) {
       header += chalk.bold.cyan(assignee.substring(0, assigneeColumnWidth).padEnd(assigneeColumnWidth + 2));
     }
-    console.log(header);
-    console.log(chalk.gray(headerLine));
-    
+
     // Print sprint rows
     for (const sprint of sprintSummaries) {
       const completionPercentage = (sprint.completedIssues / sprint.totalIssues) * 100;
@@ -313,6 +388,70 @@ async function getAllProjectSprints(sprintNumber?: string) {
     }
     console.log(totalRow);
     console.log(chalk.gray(headerLine));
+
+    // After printing the main table, add the Issue Completion table
+    console.log('\n' + chalk.bold.blue('Issue Completion Table:'));
+    
+    // Calculate total width for the new table
+    const completionHeaderLine = '─'.repeat(maxNameLength + 40);
+    console.log(chalk.gray(completionHeaderLine));
+    
+    // Print completion table headers
+    const completionHeader = 
+      chalk.bold.white('Sprint'.padEnd(maxNameLength + 2)) +
+      chalk.bold.white('Assignee'.padEnd(20)) +
+      chalk.bold.white('Started'.padEnd(10)) +
+      chalk.bold.white('Done'.padEnd(8)) +
+      chalk.bold.white('Completed Issues');
+    
+    console.log(completionHeader);
+    console.log(chalk.gray(completionHeaderLine));
+    
+    // Print completion stats for each sprint
+    for (const sprint of sprintSummaries) {
+      const assignees = Object.keys(sprint.completionStats).sort();
+      
+      for (const assignee of assignees) {
+        const stats = sprint.completionStats[assignee];
+        const row = 
+          chalk.white(sprint.name.padEnd(maxNameLength + 2)) +
+          chalk.cyan(assignee.padEnd(20)) +
+          chalk.yellow(String(stats.started).padEnd(10)) +
+          getCompletionColor(stats.completed, stats.started)(String(stats.completed).padEnd(8)) +
+          chalk.gray(stats.completedIssues.join(', '));
+        
+        console.log(row);
+      }
+      
+      // Add a separator line between sprints
+      console.log(chalk.gray(completionHeaderLine));
+    }
+    
+    // Add total row for completion stats
+    const totalStats: IssueCompletionStats = {};
+    for (const sprint of sprintSummaries) {
+      for (const [assignee, stats] of Object.entries(sprint.completionStats)) {
+        totalStats[assignee] = totalStats[assignee] || { started: 0, completed: 0, completedIssues: [] };
+        totalStats[assignee].started += stats.started;
+        totalStats[assignee].completed += stats.completed;
+        totalStats[assignee].completedIssues = totalStats[assignee].completedIssues.concat(stats.completedIssues);
+      }
+    }
+    
+    // Print total stats with completed issues
+    const sortedTotalAssignees = Object.keys(totalStats).sort();
+    for (const assignee of sortedTotalAssignees) {
+      const stats = totalStats[assignee];
+      const row = 
+        chalk.bold.white('TOTAL'.padEnd(maxNameLength + 2)) +
+        chalk.cyan(assignee.padEnd(20)) +
+        chalk.yellow(String(stats.started).padEnd(10)) +
+        getCompletionColor(stats.completed, stats.started)(String(stats.completed).padEnd(8)) +
+        chalk.gray(stats.completedIssues.join(', '));
+      
+      console.log(row);
+    }
+    console.log(chalk.gray(completionHeaderLine));
 
     return sprintSummaries;
   } catch (error) {
