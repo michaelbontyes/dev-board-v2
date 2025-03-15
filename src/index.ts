@@ -703,6 +703,122 @@ async function getAllProjectSprints(sprintNumber?: string) {
     }
     console.log(chalk.gray(shippersHeaderLine));
 
+    // Add Leaderboard
+    console.log('\n' + chalk.bold.blue('🏆 Leaderboard'));
+    
+    // Helper function to get top performers
+    function getTopPerformers(data: { [key: string]: number }, limit: number = 3): [string, number][] {
+      return Object.entries(data)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, limit);
+    }
+
+    // Print per-sprint leaderboards
+    for (const sprint of sprintSummaries) {
+      console.log('\n' + chalk.bold.yellow(`Sprint ${sprint.name} Champions:`));
+      console.log(chalk.gray('─'.repeat(50)));
+
+      // Hours logged leaders
+      const hoursLogged: { [key: string]: number } = {};
+      Object.entries(sprint.timeLogged).forEach(([person, seconds]) => {
+        hoursLogged[person] = convertJiraTimeToHours(seconds);
+      });
+      const topHours = getTopPerformers(hoursLogged);
+      console.log(chalk.bold.cyan('⏱️  Most Hours Logged:'));
+      topHours.forEach(([person, hours], index) => {
+        console.log(chalk.white(`   ${index + 1}. ${person}: ${Math.round(hours)}h`));
+      });
+
+      // Issues completed leaders
+      const issuesCompleted: { [key: string]: number } = {};
+      Object.entries(sprint.completionStats).forEach(([person, stats]) => {
+        issuesCompleted[person] = stats.completed;
+      });
+      const topCompleters = getTopPerformers(issuesCompleted);
+      console.log(chalk.bold.green('\n✅ Most Issues Completed:'));
+      topCompleters.forEach(([person, count], index) => {
+        console.log(chalk.white(`   ${index + 1}. ${person}: ${count} issues`));
+      });
+
+      // Top reviewers
+      const reviewed: { [key: string]: number } = {};
+      Object.entries(sprint.reviewerStats).forEach(([person, stats]) => {
+        reviewed[person] = stats.reviewed;
+      });
+      const topReviewers = getTopPerformers(reviewed);
+      console.log(chalk.bold.magenta('\n👀 Top Reviewers:'));
+      topReviewers.forEach(([person, count], index) => {
+        console.log(chalk.white(`   ${index + 1}. ${person}: ${count} reviews`));
+      });
+
+      // Top shippers
+      const shipped: { [key: string]: number } = {};
+      Object.entries(sprint.shipperStats).forEach(([person, stats]) => {
+        shipped[person] = stats.shipped;
+      });
+      const topShippers = getTopPerformers(shipped);
+      console.log(chalk.bold.blue('\n🚢 Top Shippers:'));
+      topShippers.forEach(([person, count], index) => {
+        console.log(chalk.white(`   ${index + 1}. ${person}: ${count} shipped`));
+      });
+    }
+
+    // Print overall leaderboard
+    console.log('\n' + chalk.bold.yellow('🌟 Overall Champions:'));
+    console.log(chalk.gray('─'.repeat(50)));
+
+    // Overall hours logged
+    const totalHoursLogged: { [key: string]: number } = {};
+    sprintSummaries.forEach(sprint => {
+      Object.entries(sprint.timeLogged).forEach(([person, seconds]) => {
+        totalHoursLogged[person] = (totalHoursLogged[person] || 0) + convertJiraTimeToHours(seconds);
+      });
+    });
+    const overallTopHours = getTopPerformers(totalHoursLogged);
+    console.log(chalk.bold.cyan('⏱️  Most Hours Logged Overall:'));
+    overallTopHours.forEach(([person, hours], index) => {
+      console.log(chalk.white(`   ${index + 1}. ${person}: ${Math.round(hours)}h`));
+    });
+
+    // Overall issues completed
+    const totalIssuesCompleted: { [key: string]: number } = {};
+    sprintSummaries.forEach(sprint => {
+      Object.entries(sprint.completionStats).forEach(([person, stats]) => {
+        totalIssuesCompleted[person] = (totalIssuesCompleted[person] || 0) + stats.completed;
+      });
+    });
+    const overallTopCompleters = getTopPerformers(totalIssuesCompleted);
+    console.log(chalk.bold.green('\n✅ Most Issues Completed Overall:'));
+    overallTopCompleters.forEach(([person, count], index) => {
+      console.log(chalk.white(`   ${index + 1}. ${person}: ${count} issues`));
+    });
+
+    // Overall top reviewers
+    const totalReviewed: { [key: string]: number } = {};
+    sprintSummaries.forEach(sprint => {
+      Object.entries(sprint.reviewerStats).forEach(([person, stats]) => {
+        totalReviewed[person] = (totalReviewed[person] || 0) + stats.reviewed;
+      });
+    });
+    const overallTopReviewers = getTopPerformers(totalReviewed);
+    console.log(chalk.bold.magenta('\n👀 Top Reviewers Overall:'));
+    overallTopReviewers.forEach(([person, count], index) => {
+      console.log(chalk.white(`   ${index + 1}. ${person}: ${count} reviews`));
+    });
+
+    // Overall top shippers
+    const totalShipped: { [key: string]: number } = {};
+    sprintSummaries.forEach(sprint => {
+      Object.entries(sprint.shipperStats).forEach(([person, stats]) => {
+        totalShipped[person] = (totalShipped[person] || 0) + stats.shipped;
+      });
+    });
+    const overallTopShippers = getTopPerformers(totalShipped);
+    console.log(chalk.bold.blue('\n🚢 Top Shippers Overall:'));
+    overallTopShippers.forEach(([person, count], index) => {
+      console.log(chalk.white(`   ${index + 1}. ${person}: ${count} shipped`));
+    });
+
     return sprintSummaries;
   } catch (error) {
     if (error instanceof Error) {
