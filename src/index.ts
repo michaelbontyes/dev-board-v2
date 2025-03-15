@@ -68,6 +68,27 @@ interface ShipperStats {
   };
 }
 
+// Add type for age groups
+type AgeGroup = 'recent' | 'moderate' | 'old' | 'critical';
+type AgeGroups = {
+  [K in AgeGroup]: string[];
+};
+
+// Add new interface for spillover stats
+interface SpilloverStats {
+  [assignee: string]: {
+    count: number;
+    totalSprintWeeks: number;
+    issues: {
+      key: string;
+      startDate: string;
+      originalSprint: string;
+      sprintAge: number;
+    }[];
+    ageGroups: AgeGroups;
+  };
+}
+
 interface SprintSummary {
   id: number;
   name: string;
@@ -81,7 +102,8 @@ interface SprintSummary {
   };
   completionStats: IssueCompletionStats;
   reviewerStats: ReviewerStats;
-  shipperStats: ShipperStats; // Add new field
+  shipperStats: ShipperStats;
+  spilloverStats: SpilloverStats; // Add new field
 }
 
 interface CommandArgs {
@@ -185,6 +207,22 @@ function convertJiraTimeToHours(timeSpentSeconds: number): number {
   return timeSpentSeconds / 3600; // Convert seconds to hours
 }
 
+// Add helper function to get color based on sprint age
+function getSpilloverAgeColor(sprintAge: number): Function {
+  if (sprintAge <= 2) return chalk.yellow; // Recent: yellow
+  if (sprintAge <= 4) return chalk.magenta; // Moderate: magenta
+  if (sprintAge <= 6) return chalk.red; // Old: red
+  return chalk.bgRed.white; // Critical: white on red background
+}
+
+// Update helper function to return typed age group
+function getAgeGroupLabel(sprintAge: number): AgeGroup {
+  if (sprintAge <= 2) return 'recent';
+  if (sprintAge <= 4) return 'moderate';
+  if (sprintAge <= 6) return 'old';
+  return 'critical';
+}
+
 async function getAllProjectSprints(sprintNumber?: string) {
   try {
     // First, we need to get the board ID for the project
@@ -225,11 +263,116 @@ async function getAllProjectSprints(sprintNumber?: string) {
       const timeLogged: { [key: string]: number } = {};
       const completionStats: IssueCompletionStats = {};
       const reviewerStats: ReviewerStats = {};
-      const shipperStats: ShipperStats = {}; // Initialize shipper stats
+      const shipperStats: ShipperStats = {};
+      const spilloverStats: SpilloverStats = {}; // Initialize spillover stats
       
       let completedIssues = 0;
       
       for (const issue of issues.issues) {
+        // Track spillover issues - those not completed in this sprint
+        if (issue.fields.status.name !== 'Done') {
+          let starter = '';
+          let startDate = '';
+          let originalSprint = sprint.name;
+
+          // Find who first moved it to In Progress and when
+          if (issue.changelog && issue.changelog.histories) {
+            const sortedHistory = issue.changelog.histories.sort(
+              (a: JiraChangelog, b: JiraChangelog) => new Date(a.created).getTime() - new Date(b.created).getTime()
+            );
+
+            for (const history of sortedHistory) {
+              for (const item of history.items) {
+                if (item.field === 'status' && item.toString === 'In Progress' && !starter) {
+                  starter = history.author.displayName;
+                  startDate = history.created;
+                  break;
+                }
+              }
+              if (starter) break;
+            }
+
+            // If no direct move to In Progress found, look for first move from To Do
+            if (!starter) {
+              for (const history of sortedHistory) {
+                for (const item of history.items) {
+                  if (item.field === 'status' && item.fromString === 'To Do' && !starter) {
+                    starter = history.author.displayName;
+                    startDate = history.created;
+                    break;
+                  }
+                }
+                if (starter) break;
+              }
+            }
+
+            // Only record as spillover if the issue was started before this sprint
+            if (starter && startDate) {
+              const issueStartDate = new Date(startDate);
+              const sprintStartDate = new Date(sprint.startDate);
+
+              if (issueStartDate < sprintStartDate) {
+                spilloverStats[starter] = spilloverStats[starter] || { 
+                  count: 0, 
+                  totalSprintWeeks: 0,
+                  issues: [],
+                  ageGroups: { recent: [], moderate: [], old: [], critical: [] }
+                };
+                spilloverStats[starter].count++;
+                
+                // Calculate sprint age and total sprint-weeks
+                const sprintAge = Math.ceil((sprintStartDate.getTime() - issueStartDate.getTime()) / (1000 * 60 * 60 * 24 * 14));
+                const sprintWeeks = sprintAge * 2; // Convert sprints to weeks
+                spilloverStats[starter].totalSprintWeeks += sprintWeeks;
+                
+                // Add to appropriate age group
+                const ageGroup = getAgeGroupLabel(sprintAge);
+                const coloredIssueKey = `${issue.key} (${sprintAge} sprints)`;
+                spilloverStats[starter].ageGroups[ageGroup].push(coloredIssueKey);
+                
+                spilloverStats[starter].issues.push({
+                  key: issue.key,
+                  startDate,
+                  originalSprint,
+                  sprintAge
+                });
+              }
+            } else if (issue.changelog.histories.length > 0) {
+              // If we couldn't find a starter but the issue has history and was created before the sprint
+              const issueCreatedDate = new Date(issue.changelog.histories[0].created);
+              const sprintStartDate = new Date(sprint.startDate);
+
+              if (issueCreatedDate < sprintStartDate) {
+                const unknownStarter = "Unknown";
+                spilloverStats[unknownStarter] = spilloverStats[unknownStarter] || { 
+                  count: 0, 
+                  totalSprintWeeks: 0,
+                  issues: [],
+                  ageGroups: { recent: [], moderate: [], old: [], critical: [] }
+                };
+                spilloverStats[unknownStarter].count++;
+                
+                // Calculate sprint age and total sprint-weeks
+                const sprintAge = Math.ceil((sprintStartDate.getTime() - issueCreatedDate.getTime()) / (1000 * 60 * 60 * 24 * 14));
+                const sprintWeeks = sprintAge * 2; // Convert sprints to weeks
+                spilloverStats[unknownStarter].totalSprintWeeks += sprintWeeks;
+                
+                // Add to appropriate age group
+                const ageGroup = getAgeGroupLabel(sprintAge);
+                const coloredIssueKey = `${issue.key} (${sprintAge} sprints)`;
+                spilloverStats[unknownStarter].ageGroups[ageGroup].push(coloredIssueKey);
+                
+                spilloverStats[unknownStarter].issues.push({
+                  key: issue.key,
+                  startDate: issue.changelog.histories[0].created,
+                  originalSprint,
+                  sprintAge
+                });
+              }
+            }
+          }
+        }
+
         // Process changelog to find shippers for issues that reached UAT Ready
         if (issue.changelog && issue.changelog.histories) {
           // Sort changelog by date to process events in order
@@ -424,7 +567,8 @@ async function getAllProjectSprints(sprintNumber?: string) {
         timeLogged,
         completionStats,
         reviewerStats,
-        shipperStats // Add shipper stats
+        shipperStats,
+        spilloverStats // Add spillover stats
       });
     }
 
@@ -704,6 +848,120 @@ async function getAllProjectSprints(sprintNumber?: string) {
       console.log(row);
     }
     console.log(chalk.gray(shippersHeaderLine));
+
+    // After the Shippers table, add the Spillover table with age grouping
+    console.log('\n' + chalk.bold.blue('Spillover Issues Table:'));
+    const spilloverHeaderLine = '─'.repeat(maxNameLength + 80);
+    console.log(chalk.gray(spilloverHeaderLine));
+
+    // Print spillover table headers
+    const spilloverHeader = 
+      chalk.bold.white('Sprint'.padEnd(maxNameLength + 2)) +
+      chalk.bold.white('Assignee'.padEnd(20)) +
+      chalk.bold.white('Count'.padEnd(8)) +
+      chalk.bold.white('Weeks'.padEnd(8)) +
+      chalk.bold.white('Issues by Age Group');
+
+    console.log(spilloverHeader);
+    console.log(chalk.gray(spilloverHeaderLine));
+
+    // Print spillover stats for each sprint
+    for (const sprint of sprintSummaries) {
+      const assignees = Object.keys(sprint.spilloverStats).sort();
+      
+      for (const assignee of assignees) {
+        const stats = sprint.spilloverStats[assignee];
+        let issuesByGroup = '';
+        
+        // Add issues by age group with color coding
+        if (stats.ageGroups.recent.length) {
+          issuesByGroup += chalk.yellow(`Recent: ${stats.ageGroups.recent.join(', ')} `);
+        }
+        if (stats.ageGroups.moderate.length) {
+          issuesByGroup += chalk.magenta(`Moderate: ${stats.ageGroups.moderate.join(', ')} `);
+        }
+        if (stats.ageGroups.old.length) {
+          issuesByGroup += chalk.red(`Old: ${stats.ageGroups.old.join(', ')} `);
+        }
+        if (stats.ageGroups.critical.length) {
+          issuesByGroup += chalk.bgRed.white(`Critical: ${stats.ageGroups.critical.join(', ')}`);
+        }
+        
+        const row = 
+          chalk.white(sprint.name.padEnd(maxNameLength + 2)) +
+          chalk.cyan(assignee.padEnd(20)) +
+          chalk.yellow(String(stats.count).padEnd(8)) +
+          chalk.yellow(String(stats.totalSprintWeeks).padEnd(8)) +
+          issuesByGroup;
+        
+        console.log(row);
+      }
+      
+      // Add a separator line between sprints
+      console.log(chalk.gray(spilloverHeaderLine));
+    }
+
+    // Add total row for spillover stats
+    const totalSpilloverStats: SpilloverStats = {};
+    let totalSprintWeeks = 0;
+
+    for (const sprint of sprintSummaries) {
+      for (const [assignee, stats] of Object.entries(sprint.spilloverStats)) {
+        totalSpilloverStats[assignee] = totalSpilloverStats[assignee] || {
+          count: 0,
+          totalSprintWeeks: 0,
+          issues: [],
+          ageGroups: { recent: [], moderate: [], old: [], critical: [] }
+        };
+        totalSpilloverStats[assignee].count += stats.count;
+        totalSpilloverStats[assignee].totalSprintWeeks += stats.totalSprintWeeks;
+        totalSpilloverStats[assignee].issues = totalSpilloverStats[assignee].issues.concat(stats.issues);
+        
+        // Combine age groups
+        Object.keys(stats.ageGroups).forEach(group => {
+          const typedGroup = group as AgeGroup;
+          totalSpilloverStats[assignee].ageGroups[typedGroup] = 
+            totalSpilloverStats[assignee].ageGroups[typedGroup].concat(stats.ageGroups[typedGroup]);
+        });
+        
+        totalSprintWeeks += stats.totalSprintWeeks;
+      }
+    }
+
+    // Print total spillover stats with age groups
+    const sortedTotalSpillover = Object.keys(totalSpilloverStats).sort();
+    for (const assignee of sortedTotalSpillover) {
+      const stats = totalSpilloverStats[assignee];
+      let totalIssuesByGroup = '';
+      
+      // Add total issues by age group with color coding
+      if (stats.ageGroups.recent.length) {
+        totalIssuesByGroup += chalk.yellow(`Recent: ${stats.ageGroups.recent.join(', ')} `);
+      }
+      if (stats.ageGroups.moderate.length) {
+        totalIssuesByGroup += chalk.magenta(`Moderate: ${stats.ageGroups.moderate.join(', ')} `);
+      }
+      if (stats.ageGroups.old.length) {
+        totalIssuesByGroup += chalk.red(`Old: ${stats.ageGroups.old.join(', ')} `);
+      }
+      if (stats.ageGroups.critical.length) {
+        totalIssuesByGroup += chalk.bgRed.white(`Critical: ${stats.ageGroups.critical.join(', ')}`);
+      }
+      
+      const row = 
+        chalk.bold.white('TOTAL'.padEnd(maxNameLength + 2)) +
+        chalk.cyan(assignee.padEnd(20)) +
+        chalk.yellow(String(stats.count).padEnd(8)) +
+        chalk.yellow(String(stats.totalSprintWeeks).padEnd(8)) +
+        totalIssuesByGroup;
+      
+      console.log(row);
+    }
+
+    // Print overall total sprint-weeks
+    console.log(chalk.gray(spilloverHeaderLine));
+    console.log(chalk.bold(`Total Cumulative Sprint-Weeks Across All Issues: ${totalSprintWeeks}`));
+    console.log(chalk.gray(spilloverHeaderLine));
 
     // Add Leaderboard
     console.log('\n' + chalk.bold.blue('🏆 Leaderboard'));

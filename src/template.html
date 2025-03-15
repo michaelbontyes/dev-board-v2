@@ -139,9 +139,14 @@
             backdrop-filter: blur(10px);
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             transition: transform 0.2s;
+            cursor: pointer;
+            text-decoration: none;
+            color: white;
+            display: block;
         }
         .leaderboard-card:hover {
             transform: translateY(-5px);
+            background: rgba(255, 255, 255, 0.2);
         }
         .leaderboard-card-title {
             font-size: 1.3em;
@@ -172,6 +177,27 @@
         .completion-medium { color: #ffc107; }
         .completion-low { color: #dc3545; }
         .hidden { display: none; }
+        #summaryTable td:last-child {
+            min-width: 200px;
+        }
+        #summaryTable td:last-child div {
+            margin: 4px 0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #f8f9fa;
+        }
+        .completion-high {
+            color: #28a745 !important;
+        }
+        .completion-medium {
+            color: #ffc107 !important;
+        }
+        .completion-low {
+            color: #dc3545 !important;
+        }
+        html {
+            scroll-behavior: smooth;
+        }
     </style>
 </head>
 <body>
@@ -200,7 +226,10 @@
 
         <div id="summary" class="section">
             <h2 class="section-title">Sprint Summary</h2>
-            <div class="section-description">
+            <button class="toggle-button" onclick="toggleExplanation('summary')">
+                <span class="toggle-icon">▶</span> Show calculation details
+            </button>
+            <div class="section-description" id="summary-explanation">
                 <div>A high-level overview of sprint metrics:</div>
                 <div class="metric-explanation">• Total: All issues in the sprint</div>
                 <div class="metric-explanation">• UAT: Issues that reached "UAT Ready" status</div>
@@ -209,7 +238,21 @@
                 <div class="metric-explanation">• Hours: Time logged per person during sprint dates</div>
             </div>
             <table id="summaryTable">
-                <!-- Summary table content will be populated dynamically -->
+                <thead>
+                    <tr>
+                        <th>Sprint</th>
+                        <th>Start</th>
+                        <th>End</th>
+                        <th>Total</th>
+                        <th>UAT</th>
+                        <th>Done</th>
+                        <th>%</th>
+                        <th>Hours Breakdown</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Will be populated dynamically -->
+                </tbody>
             </table>
         </div>
 
@@ -276,6 +319,28 @@
             </div>
             <table id="shippersTable">
                 <!-- Shippers table content will be populated dynamically -->
+            </table>
+        </div>
+
+        <div id="spillover" class="section">
+            <h2 class="section-title">Spillover Issues</h2>
+            <button class="toggle-button" onclick="toggleExplanation('spillover')">
+                <span class="toggle-icon">▶</span> Show calculation details
+            </button>
+            <div class="section-description" id="spillover-explanation">
+                <div>Tracks issues not completed within their sprint:</div>
+                <div class="metric-explanation">• Starter: Person who first moved the issue from "To Do"</div>
+                <div class="metric-explanation">• Count: Number of incomplete issues started by this person</div>
+                <div class="metric-explanation">• Issues: List of spillover issues with their start dates</div>
+                <div class="metric-explanation">• Age: Time since the issue was first started</div>
+            </div>
+            <div style="text-align: right; margin-bottom: 10px;">
+                <button class="toggle-button" onclick="toggleIssuesColumn('spillover')">
+                    <span class="toggle-icon">▶</span> Show issue details
+                </button>
+            </div>
+            <table id="spilloverTable">
+                <!-- Spillover table content will be populated dynamically -->
             </table>
         </div>
     </div>
@@ -398,43 +463,94 @@
             updateCompletionTable(filteredData);
             updateReviewersTable(filteredData);
             updateShippersTable(filteredData);
+            updateSpilloverTable(filteredData);
             updateLeaderboard(filteredData);
+        }
+
+        function getCompletionColorClass(completed, total) {
+            const percentage = (completed / total) * 100;
+            if (percentage >= 80) return 'completion-high';
+            if (percentage >= 50) return 'completion-medium';
+            return 'completion-low';
+        }
+
+        function getTimeLogColorClass(hours) {
+            if (hours > 60) return 'completion-high';
+            if (hours > 40) return 'completion-medium';
+            return 'completion-low';
         }
 
         function updateSummaryTable(data) {
             const table = document.getElementById('summaryTable');
-            let html = `
-                <tr>
-                    <th>Sprint</th>
-                    <th>Start</th>
-                    <th>End</th>
-                    <th>Total</th>
-                    <th>UAT</th>
-                    <th>Done</th>
-                    <th>%</th>
-                    <th>Hours</th>
-                </tr>`;
+            const tbody = table.querySelector('tbody');
+            tbody.innerHTML = '';
 
             data.forEach(sprint => {
-                const completionPercentage = (sprint.completedIssues / sprint.totalIssues) * 100;
-                const completionClass = getCompletionColor(sprint.completedIssues, sprint.totalIssues);
-                const totalHours = Object.values(sprint.timeLogged)
-                    .reduce((sum, seconds) => sum + seconds / 3600, 0);
+                if (currentFilters.sprint !== 'all' && sprint.name !== currentFilters.sprint) return;
 
-                html += `
-                    <tr>
-                        <td>${sprint.name}</td>
-                        <td>${formatDate(sprint.startDate)}</td>
-                        <td>${formatDate(sprint.endDate)}</td>
-                        <td>${sprint.totalIssues}</td>
-                        <td>${sprint.uatReadyIssues}</td>
-                        <td class="${completionClass}">${sprint.completedIssues}</td>
-                        <td class="${completionClass}">${Math.round(completionPercentage)}%</td>
-                        <td>${Math.round(totalHours)}h</td>
-                    </tr>`;
+                const row = document.createElement('tr');
+                const completionPercentage = (sprint.completedIssues / sprint.totalIssues) * 100;
+                const completionClass = getCompletionColorClass(sprint.completedIssues, sprint.totalIssues);
+
+                // Create hours breakdown HTML
+                const hoursBreakdown = Object.entries(sprint.timeLogged)
+                    .map(([person, seconds]) => {
+                        const hours = Math.round(seconds / 3600);
+                        const colorClass = getTimeLogColorClass(hours);
+                        return `<div class="${colorClass}">${person}: ${hours}h</div>`;
+                    })
+                    .join('');
+
+                row.innerHTML = `
+                    <td>${sprint.name}</td>
+                    <td>${formatDate(sprint.startDate)}</td>
+                    <td>${formatDate(sprint.endDate)}</td>
+                    <td>${sprint.totalIssues}</td>
+                    <td>${sprint.uatReadyIssues}</td>
+                    <td class="${completionClass}">${sprint.completedIssues}</td>
+                    <td class="${completionClass}">${Math.round(completionPercentage)}%</td>
+                    <td>${hoursBreakdown}</td>
+                `;
+
+                tbody.appendChild(row);
             });
 
-            table.innerHTML = html;
+            // Add total row
+            const totalRow = document.createElement('tr');
+            const totalIssues = data.reduce((sum, s) => sum + s.totalIssues, 0);
+            const totalCompleted = data.reduce((sum, s) => sum + s.completedIssues, 0);
+            const totalUatReady = data.reduce((sum, s) => sum + s.uatReadyIssues, 0);
+            const totalPercentage = (totalCompleted / totalIssues) * 100;
+            const totalCompletionClass = getCompletionColorClass(totalCompleted, totalIssues);
+
+            // Calculate total hours per person across all sprints
+            const totalHours = {};
+            data.forEach(sprint => {
+                Object.entries(sprint.timeLogged).forEach(([person, seconds]) => {
+                    totalHours[person] = (totalHours[person] || 0) + seconds / 3600;
+                });
+            });
+
+            const totalHoursBreakdown = Object.entries(totalHours)
+                .map(([person, hours]) => {
+                    const roundedHours = Math.round(hours);
+                    const colorClass = getTimeLogColorClass(roundedHours);
+                    return `<div class="${colorClass}">${person}: ${roundedHours}h</div>`;
+                })
+                .join('');
+
+            totalRow.innerHTML = `
+                <td><strong>TOTAL</strong></td>
+                <td></td>
+                <td></td>
+                <td><strong>${totalIssues}</strong></td>
+                <td><strong>${totalUatReady}</strong></td>
+                <td class="${totalCompletionClass}"><strong>${totalCompleted}</strong></td>
+                <td class="${totalCompletionClass}"><strong>${Math.round(totalPercentage)}%</strong></td>
+                <td>${totalHoursBreakdown}</td>
+            `;
+
+            tbody.appendChild(totalRow);
         }
 
         function updateCompletionTable(data) {
@@ -515,39 +631,76 @@
             table.innerHTML = html;
         }
 
+        function updateSpilloverTable(data) {
+            const table = document.getElementById('spilloverTable');
+            let html = `
+                <tr>
+                    <th>Sprint</th>
+                    <th>Starter</th>
+                    <th>Count</th>
+                    <th class="issues-column">Issues</th>
+                    <th class="issues-column">Start Dates</th>
+                </tr>`;
+
+            data.forEach(sprint => {
+                Object.entries(sprint.spilloverStats).forEach(([starter, stats]) => {
+                    const issueList = stats.issues.map(issue => issue.key).join(', ');
+                    const dateList = stats.issues.map(issue => formatDate(issue.startDate)).join(', ');
+                    
+                    html += `
+                        <tr>
+                            <td>${sprint.name}</td>
+                            <td>${starter}</td>
+                            <td>${stats.count}</td>
+                            <td class="issues-column">${issueList}</td>
+                            <td class="issues-column">${dateList}</td>
+                        </tr>`;
+                });
+            });
+
+            table.innerHTML = html;
+        }
+
         function updateLeaderboard(data) {
             const leaderboard = document.querySelector('.leaderboard');
             const stats = calculateLeaderboardStats(data);
             
             leaderboard.innerHTML = `
-                <div class="leaderboard-card">
+                <a href="#summary" class="leaderboard-card">
                     <h3 class="leaderboard-card-title">⏱️ Most Hours Logged</h3>
                     <div class="leaderboard-card-description">
                         Total hours logged in Jira worklogs during sprint periods
                     </div>
                     ${formatLeaderboardEntries(stats.hoursLogged, 'h')}
-                </div>
-                <div class="leaderboard-card">
+                </a>
+                <a href="#completion" class="leaderboard-card">
                     <h3 class="leaderboard-card-title">✅ Most Issues Completed</h3>
                     <div class="leaderboard-card-description">
                         Number of issues moved to "Done" after being started by the assignee
                     </div>
                     ${formatLeaderboardEntries(stats.issuesCompleted, ' issues')}
-                </div>
-                <div class="leaderboard-card">
+                </a>
+                <a href="#reviewers" class="leaderboard-card">
                     <h3 class="leaderboard-card-title">👀 Top Reviewers</h3>
                     <div class="leaderboard-card-description">
                         Issues moved from "PR Ready" to "Testing" (* indicates indirect transitions)
                     </div>
                     ${formatLeaderboardEntries(stats.reviewed, ' reviews')}
-                </div>
-                <div class="leaderboard-card">
+                </a>
+                <a href="#shippers" class="leaderboard-card">
                     <h3 class="leaderboard-card-title">🚢 Top Shippers</h3>
                     <div class="leaderboard-card-description">
                         Issues moved from "Testing" to "UAT Ready" (* indicates indirect transitions)
                     </div>
                     ${formatLeaderboardEntries(stats.shipped, ' shipped')}
-                </div>`;
+                </a>
+                <a href="#spillover" class="leaderboard-card">
+                    <h3 class="leaderboard-card-title">🎯 Least Spillover Issues</h3>
+                    <div class="leaderboard-card-description">
+                        Best performers with fewest issues not completed within their sprint
+                    </div>
+                    ${formatLeaderboardEntries(stats.spillover, ' issues', true)}
+                </a>`;
         }
 
         function calculateLeaderboardStats(data) {
@@ -555,7 +708,8 @@
                 hoursLogged: {},
                 issuesCompleted: {},
                 reviewed: {},
-                shipped: {}
+                shipped: {},
+                spillover: {}
             };
 
             data.forEach(sprint => {
@@ -578,15 +732,20 @@
                 Object.entries(sprint.shipperStats).forEach(([person, personStats]) => {
                     stats.shipped[person] = (stats.shipped[person] || 0) + personStats.shipped;
                 });
+
+                // Spillover issues
+                Object.entries(sprint.spilloverStats).forEach(([person, personStats]) => {
+                    stats.spillover[person] = (stats.spillover[person] || 0) + personStats.count;
+                });
             });
 
             return stats;
         }
 
-        function formatLeaderboardEntries(data, suffix) {
+        function formatLeaderboardEntries(data, suffix, invertSort = false) {
             const medals = ['🥇', '🥈', '🥉'];
             return Object.entries(data)
-                .sort((a, b) => b[1] - a[1])
+                .sort((a, b) => invertSort ? a[1] - b[1] : b[1] - a[1])
                 .slice(0, 3)
                 .map((entry, index) => `
                     <div class="leaderboard-entry">
