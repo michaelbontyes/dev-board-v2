@@ -40,8 +40,15 @@ interface JiraChangelogItem {
 }
 
 interface JiraChangelog {
+  author: {
+    displayName: string;
+  };
   created: string;
-  items: JiraChangelogItem[];
+  items: Array<{
+    field: string;
+    fromString: string;
+    toString: string;
+  }>;
 }
 
 interface IssueCompletionStats {
@@ -103,12 +110,35 @@ interface SprintSummary {
   completionStats: IssueCompletionStats;
   reviewerStats: ReviewerStats;
   shipperStats: ShipperStats;
-  spilloverStats: SpilloverStats; // Add new field
+  spilloverStats: SpilloverStats;
+  missingEstimates: {
+    key: string;
+    assignee: string | null;
+  }[];
 }
 
 interface CommandArgs {
   report: string;
   sprintNumber?: string;
+}
+
+interface JiraIssue {
+  key: string;
+  fields: {
+    assignee?: {
+      displayName: string;
+    };
+    timeoriginalestimate?: number;
+    status: {
+      name: string;
+    };
+    worklog?: {
+      worklogs: JiraWorklog[];
+    };
+  };
+  changelog?: {
+    histories: JiraChangelog[];
+  };
 }
 
 // Parse command line arguments
@@ -140,27 +170,50 @@ const jira = new JiraClient({
   timeout: Number(process.env.JIRA_REQUEST_TIMEOUT) || 30000
 });
 
-async function getSprintIssues(sprintId: number) {
-  // Get all issues in the sprint
-  const jql = `sprint = ${sprintId}`;
-  const allIssues = await jira.searchJira(jql, {
-    maxResults: 1000,
-    fields: ['summary', 'status', 'assignee', 'timetracking', 'worklog'],
-    expand: ['changelog']
-  });
+async function getSprintIssues(sprintId: number): Promise<{
+  issues: JiraIssue[];
+  total: number;
+  uatTotal: number;
+  noEstimateIssues: Array<{key: string; assignee: string | null}>;
+}> {
+  try {
+    // Get all issues in the sprint
+    const jql = `sprint = ${sprintId}`;
+    const allIssues = await jira.searchJira(jql, {
+      maxResults: 1000,
+      fields: ['summary', 'status', 'assignee', 'timetracking', 'worklog', 'timeoriginalestimate'],
+      expand: ['changelog']
+    });
 
-  // Get issues that were in UAT Ready during the sprint
-  const uatJql = `sprint = ${sprintId} AND status was "UAT Ready"`;
-  const uatIssues = await jira.searchJira(uatJql, {
-    maxResults: 1000,
-    fields: ['key']
-  });
+    // Get issues that were in UAT Ready during the sprint
+    const uatJql = `sprint = ${sprintId} AND status was "UAT Ready"`;
+    const uatIssues = await jira.searchJira(uatJql, {
+      maxResults: 1000,
+      fields: ['key']
+    });
 
-  return {
-    issues: allIssues.issues,
-    total: allIssues.total,
-    uatTotal: uatIssues.total
-  };
+    // Get issues without original estimate - updated query to match JIRA's syntax
+    const noEstimateJql = `sprint = ${sprintId} AND (originalEstimate is EMPTY OR originalEstimate = 0)`;
+    const noEstimateIssues = await jira.searchJira(noEstimateJql, {
+      maxResults: 1000,
+      fields: ['key', 'assignee']
+    });
+
+    console.log(`Found ${noEstimateIssues.issues.length} issues without estimates in sprint ${sprintId}`);
+
+    return {
+      issues: allIssues.issues as JiraIssue[],
+      total: allIssues.total,
+      uatTotal: uatIssues.total,
+      noEstimateIssues: noEstimateIssues.issues.map((issue: JiraIssue) => ({
+        key: issue.key,
+        assignee: issue.fields.assignee ? issue.fields.assignee.displayName : null
+      }))
+    };
+  } catch (error) {
+    console.error('Error fetching sprint issues:', error);
+    throw error;
+  }
 }
 
 async function getAllProjectIssues() {
@@ -223,7 +276,7 @@ function getAgeGroupLabel(sprintAge: number): AgeGroup {
   return 'critical';
 }
 
-async function getAllProjectSprints(sprintNumber?: string) {
+const getAllProjectSprints = async (sprintNumber?: string): Promise<SprintSummary[]> => {
   try {
     // First, we need to get the board ID for the project
     const boards = await jira.getAllBoards();
@@ -259,16 +312,27 @@ async function getAllProjectSprints(sprintNumber?: string) {
     
     for (const sprint of filteredSprints) {
       console.log(chalk.yellow(`Fetching data for sprint: ${sprint.name}...`));
-      const issues = await getSprintIssues(sprint.id);
+      const { issues, total, uatTotal, noEstimateIssues } = await getSprintIssues(sprint.id);
       const timeLogged: { [key: string]: number } = {};
       const completionStats: IssueCompletionStats = {};
       const reviewerStats: ReviewerStats = {};
       const shipperStats: ShipperStats = {};
-      const spilloverStats: SpilloverStats = {}; // Initialize spillover stats
+      const spilloverStats: SpilloverStats = {};
       
+      // Use the noEstimateIssues directly instead of checking timeoriginalestimate
+      const missingEstimates = noEstimateIssues;
+
       let completedIssues = 0;
       
-      for (const issue of issues.issues) {
+      for (const issue of issues) {
+        // Track issues without original estimates
+        if (!issue.fields.timeoriginalestimate) {
+          missingEstimates.push({
+            key: issue.key,
+            assignee: issue.fields.assignee ? issue.fields.assignee.displayName : null
+          });
+        }
+
         // Track spillover issues - those not completed in this sprint
         if (issue.fields.status.name !== 'Done') {
           let starter = '';
@@ -556,20 +620,23 @@ async function getAllProjectSprints(sprintNumber?: string) {
         }
       }
       
-      sprintSummaries.push({
+      const summary: SprintSummary = {
         id: sprint.id,
         name: sprint.name,
         startDate: sprint.startDate,
         endDate: sprint.endDate,
-        totalIssues: issues.total,
+        totalIssues: total,
         completedIssues,
-        uatReadyIssues: issues.uatTotal,
+        uatReadyIssues: uatTotal,
         timeLogged,
         completionStats,
         reviewerStats,
         shipperStats,
-        spilloverStats // Add spillover stats
-      });
+        spilloverStats,
+        missingEstimates
+      };
+
+      sprintSummaries.push(summary);
     }
 
     // Sort assignees for consistent column order
@@ -1034,6 +1101,7 @@ async function getAllProjectSprints(sprintNumber?: string) {
         totalHoursLogged[person] = (totalHoursLogged[person] || 0) + convertJiraTimeToHours(seconds);
       });
     });
+
     const overallTopHours = getTopPerformers(totalHoursLogged);
     console.log(chalk.bold.cyan('⏱️  Most Hours Logged Overall:'));
     overallTopHours.forEach(([person, hours], index) => {
@@ -1047,6 +1115,7 @@ async function getAllProjectSprints(sprintNumber?: string) {
         totalIssuesCompleted[person] = (totalIssuesCompleted[person] || 0) + stats.completed;
       });
     });
+
     const overallTopCompleters = getTopPerformers(totalIssuesCompleted);
     console.log(chalk.bold.green('\n✅ Most Issues Completed Overall:'));
     overallTopCompleters.forEach(([person, count], index) => {
@@ -1060,6 +1129,7 @@ async function getAllProjectSprints(sprintNumber?: string) {
         totalReviewed[person] = (totalReviewed[person] || 0) + stats.reviewed;
       });
     });
+
     const overallTopReviewers = getTopPerformers(totalReviewed);
     console.log(chalk.bold.magenta('\n👀 Top Reviewers Overall:'));
     overallTopReviewers.forEach(([person, count], index) => {
@@ -1073,6 +1143,7 @@ async function getAllProjectSprints(sprintNumber?: string) {
         totalShipped[person] = (totalShipped[person] || 0) + stats.shipped;
       });
     });
+
     const overallTopShippers = getTopPerformers(totalShipped);
     console.log(chalk.bold.blue('\n🚢 Top Shippers Overall:'));
     overallTopShippers.forEach(([person, count], index) => {
@@ -1081,17 +1152,19 @@ async function getAllProjectSprints(sprintNumber?: string) {
 
     return sprintSummaries;
   } catch (error) {
-    if (error instanceof Error) {
-      console.error(chalk.red('Error fetching sprints:', error.message));
-    } else {
-      console.error(chalk.red('Error fetching sprints:', error));
-    }
+    console.error('Error fetching sprints:', error);
     throw error;
   }
-}
+};
 
-async function generateHtmlReport(sprintSummaries: SprintSummary[]) {
+async function generateHtmlReport(sprintSummaries: SprintSummary[]): Promise<void> {
   try {
+    // Log missing estimates data
+    sprintSummaries.forEach(sprint => {
+      console.log(`Sprint ${sprint.name} has ${sprint.missingEstimates.length} issues without estimates:`, 
+        sprint.missingEstimates.map(issue => issue.key).join(', '));
+    });
+
     // Read the template file
     const templatePath = path.join(__dirname, 'template.html');
     let template = fs.readFileSync(templatePath, 'utf8');
@@ -1109,12 +1182,12 @@ async function generateHtmlReport(sprintSummaries: SprintSummary[]) {
     console.log(chalk.green(`\nHTML report generated: ${outputPath}`));
     console.log(chalk.blue('Open this file in your browser to view the interactive report.'));
   } catch (error) {
-    console.error(chalk.red('Error generating HTML report:', error));
+    console.error('Error generating HTML report:', error);
     throw error;
   }
 }
 
-async function main() {
+const main = async (): Promise<void> => {
   try {
     const args = parseArgs();
     let sprintSummaries;
@@ -1129,17 +1202,12 @@ async function main() {
         sprintSummaries = await getAllProjectSprints();
     }
 
-    // Generate HTML report
     await generateHtmlReport(sprintSummaries);
   } catch (error) {
-    if (error instanceof Error) {
-      console.error(chalk.red('Error in main execution:', error.message));
-    } else {
-      console.error(chalk.red('Error in main execution:', error));
-    }
+    console.error('Error in main execution:', error);
     process.exit(1);
   }
-}
+};
 
 // Add usage information
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -1156,4 +1224,7 @@ ${chalk.bold('Examples:')}
   process.exit(0);
 }
 
-main();
+main().catch(error => {
+  console.error('Unhandled error:', error);
+  process.exit(1);
+});

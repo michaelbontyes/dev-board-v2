@@ -256,6 +256,34 @@
             </table>
         </div>
 
+        <div id="missingEstimatesSection" class="section">
+            <h2>Missing Estimates</h2>
+            <button onclick="toggleCalculationDetails('missingEstimates')" class="toggle-button">
+                Show/Hide Calculation Details
+            </button>
+            <div id="missingEstimatesDetails" class="calculation-details" style="display: none;">
+                <p>This section shows:</p>
+                <ul>
+                    <li>Assignee: The person assigned to the issue</li>
+                    <li>Count: Number of issues without original estimates</li>
+                    <li>Issues: List of issue keys missing estimates</li>
+                </ul>
+            </div>
+            <table id="missingEstimatesTable">
+                <thead>
+                    <tr>
+                        <th>Sprint</th>
+                        <th>Assignee</th>
+                        <th>Count</th>
+                        <th>Issues</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Will be populated by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+
         <div id="completion" class="section">
             <h2 class="section-title">Issue Completion</h2>
             <button class="toggle-button" onclick="toggleExplanation('completion')">
@@ -464,6 +492,7 @@
             updateReviewersTable(filteredData);
             updateShippersTable(filteredData);
             updateSpilloverTable(filteredData);
+            updateMissingEstimatesTable(filteredData);
             updateLeaderboard(filteredData);
         }
 
@@ -661,6 +690,60 @@
             table.innerHTML = html;
         }
 
+        function updateMissingEstimatesTable(data) {
+            console.log('Updating missing estimates table with data:', data);
+            const table = document.getElementById('missingEstimatesTable').getElementsByTagName('tbody')[0];
+            table.innerHTML = '';
+
+            // Process the data sprint by sprint
+            data.forEach(sprint => {
+                // Skip if sprint doesn't match filter
+                if (currentFilters.sprint !== 'all' && currentFilters.sprint !== sprint.name) {
+                    return;
+                }
+
+                // Group issues by assignee for this sprint
+                const assigneeGroups = {};
+                sprint.missingEstimates.forEach(issue => {
+                    const assignee = issue.assignee || 'Unassigned';
+                    // Skip if assignee doesn't match filter
+                    if (currentFilters.assignee !== 'all' && currentFilters.assignee !== assignee) {
+                        return;
+                    }
+                    if (!assigneeGroups[assignee]) {
+                        assigneeGroups[assignee] = {
+                            count: 0,
+                            issues: []
+                        };
+                    }
+                    assigneeGroups[assignee].count++;
+                    assigneeGroups[assignee].issues.push(issue.key);
+                });
+
+                // Create rows for each assignee in this sprint
+                Object.entries(assigneeGroups)
+                    .sort((a, b) => b[1].count - a[1].count) // Sort by count in descending order
+                    .forEach(([assignee, stats]) => {
+                        const row = table.insertRow();
+                        row.insertCell().textContent = sprint.name;
+                        row.insertCell().textContent = assignee;
+                        row.insertCell().textContent = stats.count;
+                        row.insertCell().textContent = stats.issues.join(', ');
+                    });
+            });
+
+            // If no data was added, show a message
+            if (table.rows.length === 0) {
+                const row = table.insertRow();
+                const cell = row.insertCell();
+                cell.colSpan = 4;
+                cell.textContent = 'No issues missing estimates found for the selected filters';
+                cell.style.textAlign = 'center';
+                cell.style.fontStyle = 'italic';
+                cell.style.color = '#666';
+            }
+        }
+
         function updateLeaderboard(data) {
             const leaderboard = document.querySelector('.leaderboard');
             const stats = calculateLeaderboardStats(data);
@@ -774,6 +857,17 @@
             Array.from(cells).forEach(cell => cell.classList.toggle('visible'));
             icon.classList.toggle('rotated');
             button.innerHTML = `<span class="toggle-icon ${cells[0].classList.contains('visible') ? 'rotated' : ''}">▶</span> ${cells[0].classList.contains('visible') ? 'Hide' : 'Show'} issue details`;
+        }
+
+        function toggleIssuesList(section) {
+            const button = document.querySelector(`#${section} .toggle-button:nth-of-type(2)`);
+            const icon = button.querySelector('.toggle-icon');
+            const issuesColumns = document.querySelectorAll(`#${section}Table .issues-column`);
+            
+            icon.classList.toggle('rotated');
+            issuesColumns.forEach(col => col.classList.toggle('visible'));
+            
+            button.innerHTML = `<span class="toggle-icon${icon.classList.contains('rotated') ? ' rotated' : ''}">▶</span> ${icon.classList.contains('rotated') ? 'Hide' : 'Show'} Issues`;
         }
 
         // Initialize the page
