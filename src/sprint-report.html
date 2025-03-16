@@ -1061,13 +1061,14 @@
             data.forEach(sprint => {
                 Object.entries(sprint.completionStats).forEach(([assignee, stats]) => {
                     const completionClass = getCompletionColor(stats.completed, stats.started);
+                    const issueLinks = stats.completedIssues.map(key => formatIssueKey(key)).join(', ');
                     html += `
                         <tr>
                             <td>${sprint.name}</td>
                             <td>${assignee}</td>
                             <td>${stats.started}</td>
                             <td class="${completionClass}">${stats.completed}</td>
-                            <td class="issues-column">${stats.completedIssues.join(', ')}</td>
+                            <td class="issues-column">${issueLinks}</td>
                         </tr>`;
                 });
             });
@@ -1087,12 +1088,13 @@
 
             data.forEach(sprint => {
                 Object.entries(sprint.reviewerStats).forEach(([reviewer, stats]) => {
+                    const issueLinks = stats.reviewedIssues.map(key => formatIssueKey(key)).join(', ');
                     html += `
                         <tr>
                             <td>${sprint.name}</td>
                             <td>${reviewer}</td>
                             <td>${stats.reviewed}</td>
-                            <td class="issues-column">${stats.reviewedIssues.join(', ')}</td>
+                            <td class="issues-column">${issueLinks}</td>
                         </tr>`;
                 });
             });
@@ -1112,12 +1114,13 @@
 
             data.forEach(sprint => {
                 Object.entries(sprint.shipperStats).forEach(([shipper, stats]) => {
+                    const issueLinks = stats.shippedIssues.map(key => formatIssueKey(key)).join(', ');
                     html += `
                         <tr>
                             <td>${sprint.name}</td>
                             <td>${shipper}</td>
                             <td>${stats.shipped}</td>
-                            <td class="issues-column">${stats.shippedIssues.join(', ')}</td>
+                            <td class="issues-column">${issueLinks}</td>
                         </tr>`;
                 });
             });
@@ -1138,7 +1141,7 @@
 
             data.forEach(sprint => {
                 Object.entries(sprint.spilloverStats).forEach(([starter, stats]) => {
-                    const issueList = stats.issues.map(issue => issue.key).join(', ');
+                    const issueLinks = stats.issues.map(issue => formatIssueKey(issue.key)).join(', ');
                     const dateList = stats.issues.map(issue => formatDate(issue.startDate)).join(', ');
                     
                     html += `
@@ -1146,7 +1149,7 @@
                             <td>${sprint.name}</td>
                             <td>${starter}</td>
                             <td>${stats.count}</td>
-                            <td class="issues-column">${issueList}</td>
+                            <td class="issues-column">${issueLinks}</td>
                             <td class="issues-column">${dateList}</td>
                         </tr>`;
                 });
@@ -1156,19 +1159,14 @@
         }
 
         function updateMissingEstimatesTable(data) {
-            console.log('Updating missing estimates table with data:', data);
             const table = document.getElementById('missingEstimatesTable').getElementsByTagName('tbody')[0];
             table.innerHTML = '';
 
-            // Process the data sprint by sprint
             data.forEach(sprint => {
-                // Skip if sprint doesn't match filter
-                if (currentFilters.sprint !== 'all' && currentFilters.sprint !== sprint.name) {
-                    return;
-                }
-
                 // Group issues by assignee for this sprint
                 const assigneeGroups = {};
+                
+                // Use Set to prevent duplicates
                 sprint.missingEstimates.forEach(issue => {
                     const assignee = issue.assignee || 'Unassigned';
                     // Skip if assignee doesn't match filter
@@ -1178,11 +1176,13 @@
                     if (!assigneeGroups[assignee]) {
                         assigneeGroups[assignee] = {
                             count: 0,
-                            issues: []
+                            issues: new Set()  // Use Set instead of array
                         };
                     }
-                    assigneeGroups[assignee].count++;
-                    assigneeGroups[assignee].issues.push(issue.key);
+                    if (!assigneeGroups[assignee].issues.has(issue.key)) {  // Check if issue already exists
+                        assigneeGroups[assignee].count++;
+                        assigneeGroups[assignee].issues.add(issue.key);
+                    }
                 });
 
                 // Create rows for each assignee in this sprint
@@ -1193,20 +1193,14 @@
                         row.insertCell().textContent = sprint.name;
                         row.insertCell().textContent = assignee;
                         row.insertCell().textContent = stats.count;
-                        row.insertCell().textContent = stats.issues.join(', ');
+                        
+                        // Create clickable links for each issue
+                        const issueCell = row.insertCell();
+                        issueCell.innerHTML = Array.from(stats.issues)
+                            .map(key => formatIssueKey(key))
+                            .join(', ');
                     });
             });
-
-            // If no data was added, show a message
-            if (table.rows.length === 0) {
-                const row = table.insertRow();
-                const cell = row.insertCell();
-                cell.colSpan = 4;
-                cell.textContent = 'No issues missing estimates found for the selected filters';
-                cell.style.textAlign = 'center';
-                cell.style.fontStyle = 'italic';
-                cell.style.color = '#666';
-            }
         }
 
         function updateLeaderboard(data) {
@@ -1242,6 +1236,13 @@
                     </div>
                     ${formatLeaderboardEntries(stats.shipped, ' shipped')}
                 </a>
+                <a href="#missingEstimatesSection" class="leaderboard-card">
+                    <h3 class="leaderboard-card-title">📊 Best Estimate Coverage</h3>
+                    <div class="leaderboard-card-description">
+                        Percentage of issues with original estimates set
+                    </div>
+                    ${formatLeaderboardEntries(stats.estimateCoverage, '%')}
+                </a>
                 <a href="#spillover" class="leaderboard-card">
                     <h3 class="leaderboard-card-title">🎯 Least Spillover Issues</h3>
                     <div class="leaderboard-card-description">
@@ -1257,8 +1258,12 @@
                 issuesCompleted: {},
                 reviewed: {},
                 shipped: {},
-                spillover: {}
+                spillover: {},
+                estimateCoverage: {}
             };
+
+            // Track issues per assignee
+            const assigneeStats = {};
 
             data.forEach(sprint => {
                 // Hours logged
@@ -1285,22 +1290,76 @@
                 Object.entries(sprint.spilloverStats).forEach(([person, personStats]) => {
                     stats.spillover[person] = (stats.spillover[person] || 0) + personStats.count;
                 });
+
+                // Get all assignees and their total issues
+                Object.entries(sprint.completionStats).forEach(([person, personStats]) => {
+                    if (!assigneeStats[person]) {
+                        assigneeStats[person] = { total: 0, missingEstimates: new Set() };
+                    }
+                    assigneeStats[person].total += personStats.started;
+                });
+
+                // Track missing estimates
+                sprint.missingEstimates.forEach(issue => {
+                    const assignee = issue.assignee || 'Unassigned';
+                    if (!assigneeStats[assignee]) {
+                        assigneeStats[assignee] = { total: 0, missingEstimates: new Set() };
+                    }
+                    assigneeStats[assignee].missingEstimates.add(issue.key);
+                });
+            });
+
+            // Calculate estimate coverage for all assignees
+            Object.entries(assigneeStats).forEach(([person, personStats]) => {
+                const missingCount = personStats.missingEstimates.size;
+                const coverage = ((personStats.total - missingCount) / personStats.total) * 100;
+                
+                if (personStats.total > 0) {
+                    stats.estimateCoverage[person] = {
+                        percentage: Math.round(coverage),
+                        total: personStats.total,
+                        withEstimates: personStats.total - missingCount,
+                        missingEstimates: missingCount
+                    };
+                }
             });
 
             return stats;
         }
 
         function formatLeaderboardEntries(data, suffix, invertSort = false) {
-            const medals = ['🥇', '🥈', '🥉'];
-            return Object.entries(data)
-                .sort((a, b) => invertSort ? a[1] - b[1] : b[1] - a[1])
-                .slice(0, 3)
-                .map((entry, index) => `
-                    <div class="leaderboard-entry">
-                        <span class="leaderboard-medal">${medals[index]}</span>
-                        <span>${entry[0]}: ${Math.round(entry[1])}${suffix}</span>
-                    </div>`)
-                .join('');
+            const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+            let entries;
+            
+            if (typeof Object.values(data)[0] === 'object') {
+                // Handle estimate coverage - show all entries
+                entries = Object.entries(data)
+                    .sort((a, b) => b[1].percentage - a[1].percentage)
+                    .map((entry, index) => {
+                        const stats = entry[1];
+                        const percentage = stats.percentage;
+                        const colorClass = percentage >= 90 ? 'completion-high' : 
+                                        percentage >= 70 ? 'completion-medium' : 
+                                        'completion-low';
+                        return `
+                            <div class="leaderboard-entry">
+                                <span class="leaderboard-medal">${index < 5 ? medals[index] : '👤'}</span>
+                                <span class="${colorClass}">${entry[0]}: ${stats.percentage}${suffix} (${stats.withEstimates}/${stats.total})</span>
+                            </div>`;
+                    });
+            } else {
+                // Handle other metrics - show only top 3
+                entries = Object.entries(data)
+                    .sort((a, b) => invertSort ? a[1] - b[1] : b[1] - a[1])
+                    .slice(0, 3)
+                    .map((entry, index) => `
+                        <div class="leaderboard-entry">
+                            <span class="leaderboard-medal">${medals[index]}</span>
+                            <span>${entry[0]}: ${Math.round(entry[1])}${suffix}</span>
+                        </div>`);
+            }
+            
+            return entries.join('');
         }
 
         function toggleExplanation(section) {
@@ -1333,6 +1392,11 @@
             issuesColumns.forEach(col => col.classList.toggle('visible'));
             
             button.innerHTML = `<span class="toggle-icon${icon.classList.contains('rotated') ? ' rotated' : ''}">▶</span> ${icon.classList.contains('rotated') ? 'Hide' : 'Show'} Issues`;
+        }
+
+        // Add this helper function to create clickable issue links
+        function formatIssueKey(key) {
+            return `<a href="https://msf-ocg.atlassian.net/browse/${key}" target="_blank">${key}</a>`;
         }
 
         // Initialize the page
